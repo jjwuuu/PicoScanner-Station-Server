@@ -1,0 +1,3521 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Station Dashboard</title>
+  <script>
+    document.documentElement.dataset.theme = "dark";
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef3f8;
+      --panel: #ffffff;
+      --ink: #111827;
+      --muted: #667085;
+      --line: #d2dce8;
+      --green: #087443;
+      --blue: #1d4fb8;
+      --red: #b42318;
+      --cyan: #08798b;
+      --amber: #9b5b00;
+      --focus: #2563eb;
+      --soft-blue: #e8f0ff;
+      --soft-cyan: #e4f6f9;
+      --soft-green: #e4f5ed;
+      --soft-amber: #fff5d6;
+      --soft-gray: #eef2f6;
+      --soft-red: #fff0ef;
+      --surface: #f8fafc;
+      --surface-strong: #f1f5f9;
+      --field-bg: #ffffff;
+      --field-border: #c5cfdd;
+      --heading-ink: #0f172a;
+      --panel-title: #1f2937;
+      --row-alt: #fbfdff;
+      --row-hover: #f4f8ff;
+      --tab-bg: rgba(255, 255, 255, 0.78);
+      --form-actions-bg: rgba(248, 250, 252, 0.72);
+      --warning-panel-bg: #fffdfa;
+      --warning-panel-border: #e8bf63;
+      --staff-bg: #fff1e5;
+      --staff-ink: #7a2e0e;
+      --volunteer-ink: #0f6b56;
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow-md: 0 12px 28px rgba(16, 24, 40, 0.08);
+      --radius: 10px;
+      --radius-sm: 7px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0f172a;
+      --panel: #111c2f;
+      --ink: #e5e7eb;
+      --muted: #9ca3af;
+      --line: #26354d;
+      --green: #4ade80;
+      --blue: #8ab4ff;
+      --red: #f87171;
+      --cyan: #67e8f9;
+      --amber: #fbbf24;
+      --focus: #60a5fa;
+      --soft-blue: #172b50;
+      --soft-cyan: #123541;
+      --soft-green: #123626;
+      --soft-amber: #3a2a10;
+      --soft-gray: #1f2937;
+      --soft-red: #3a1f22;
+      --surface: #172033;
+      --surface-strong: #202b40;
+      --field-bg: #0f172a;
+      --field-border: #334155;
+      --heading-ink: #f8fafc;
+      --panel-title: #e5e7eb;
+      --row-alt: #142037;
+      --row-hover: #1d2b46;
+      --tab-bg: rgba(17, 28, 47, 0.9);
+      --form-actions-bg: rgba(15, 23, 42, 0.42);
+      --warning-panel-bg: #1f1b12;
+      --warning-panel-border: #8a621f;
+      --staff-bg: #3a2518;
+      --staff-ink: #f9a66b;
+      --volunteer-ink: #76e4c1;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32);
+      --shadow-md: 0 14px 30px rgba(0, 0, 0, 0.34);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    main {
+      width: min(1200px, calc(100vw - 48px));
+      margin: 28px auto 44px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      margin-bottom: var(--space-4);
+      padding: 18px 20px;
+      background: var(--panel);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--heading-ink);
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+
+    h2 {
+      margin: 0;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--panel-title);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .panel-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .panel-heading h2 {
+      padding: 0;
+      border-bottom: 0;
+      background: transparent;
+    }
+
+    .panel-heading button {
+      min-height: 34px;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+
+    label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--field-border);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--ink);
+      padding: 10px 12px;
+      box-shadow: inset 0 1px 0 rgba(16, 24, 40, 0.02);
+      transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      color: #98a2b3;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus,
+    button:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, 0.18);
+      outline-offset: 1px;
+      border-color: var(--focus);
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+    }
+
+    #cert-notes {
+      min-height: 56px;
+    }
+
+    button {
+      min-height: 42px;
+      border: 1px solid var(--field-border);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--ink);
+      padding: 9px 14px;
+      cursor: pointer;
+      font-weight: 700;
+      transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+
+    button:hover {
+      background: var(--surface);
+      border-color: var(--muted);
+    }
+
+    button.primary {
+      border-color: var(--focus);
+      background: var(--focus);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    button.primary:hover {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+    }
+
+    button.danger {
+      border-color: #f3b4ad;
+      background: var(--soft-red);
+      color: var(--red);
+    }
+
+    button.danger:hover {
+      border-color: var(--red);
+      background: var(--soft-red);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .header-tools {
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      gap: var(--space-4);
+      flex-wrap: wrap;
+    }
+
+    .access-panel {
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      padding: var(--space-2);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .access-panel input {
+      width: 210px;
+    }
+
+    .access-status {
+      min-width: 136px;
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      text-align: right;
+      font-weight: 700;
+    }
+
+    .access-status.access-unlocked {
+      color: var(--green);
+    }
+
+    .access-status.access-locked {
+      color: var(--muted);
+    }
+
+    .tabs {
+      display: flex;
+      gap: var(--space-1);
+      margin-bottom: var(--space-5);
+      padding: var(--space-1);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: var(--radius);
+      background: var(--tab-bg);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .tab-button {
+      min-height: 44px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 16px;
+      font-weight: 700;
+    }
+
+    .tab-button:hover {
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    .tab-button.active {
+      border-color: rgba(37, 99, 235, 0.26);
+      background: var(--soft-blue);
+      color: var(--blue);
+      box-shadow: inset 0 -2px 0 var(--focus);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--space-4);
+      margin-bottom: var(--space-5);
+    }
+
+    .metric,
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric {
+      position: relative;
+      min-height: 124px;
+      padding: 22px 18px 18px;
+      overflow: hidden;
+    }
+
+    .metric::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 4px;
+      background: var(--blue);
+    }
+
+    .metric:nth-child(1)::before {
+      background: var(--green);
+    }
+
+    .metric:nth-child(2)::before {
+      background: var(--blue);
+    }
+
+    .metric:nth-child(3)::before {
+      background: var(--amber);
+    }
+
+    .metric:nth-child(4)::before {
+      background: var(--cyan);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.055em;
+      margin-bottom: var(--space-3);
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      display: block;
+      color: var(--heading-ink);
+      font-size: 42px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .metric.metric-alert {
+      border-color: var(--warning-panel-border);
+      background: var(--warning-panel-bg);
+      box-shadow: var(--shadow-md);
+    }
+
+    .metric.metric-alert::before {
+      background: var(--red);
+    }
+
+    .metric.metric-alert strong {
+      color: var(--red);
+    }
+
+    .metric.metric-pulse {
+      animation: warning-pulse 1.2s ease-in-out 2;
+    }
+
+    @keyframes warning-pulse {
+      0%,
+      100% {
+        box-shadow: var(--shadow-md);
+      }
+
+      50% {
+        box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.28), var(--shadow-md);
+      }
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-5);
+      align-items: start;
+      margin-bottom: var(--space-5);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-4);
+      padding: 18px;
+    }
+
+    .form-grid .full {
+      grid-column: 1 / -1;
+    }
+
+    .card-editor-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-4);
+      padding: 18px;
+    }
+
+    #card-form.show-account-fields .card-editor-layout {
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+      align-items: start;
+    }
+
+    .card-editor-layout .form-grid {
+      padding: 0;
+    }
+
+    .card-editor-layout .account-fields {
+      align-self: start;
+    }
+
+    .card-editor-layout .account-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .panel-note {
+      margin: -4px 18px 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .lookup-wrap {
+      position: relative;
+    }
+
+    .lookup-results {
+      position: static;
+      z-index: 30;
+      margin-top: var(--space-2);
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid var(--field-border);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      box-shadow: 0 18px 34px rgba(15, 23, 42, 0.16);
+    }
+
+    .lookup-results button {
+      display: block;
+      width: 100%;
+      min-height: 0;
+      border: 0;
+      border-radius: 0;
+      padding: 10px 12px;
+      background: var(--field-bg);
+      text-align: left;
+    }
+
+    .lookup-results button:hover,
+    .lookup-results button:focus-visible {
+      background: var(--soft-blue);
+    }
+
+    .lookup-results strong,
+    .lookup-results small {
+      display: block;
+    }
+
+    .lookup-results small {
+      margin-top: 3px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .account-fields {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .account-fields h3 {
+      margin: 0 0 14px;
+      color: var(--panel-title);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .account-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-4);
+    }
+
+    .form-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: var(--space-3);
+      padding: 16px 18px 18px;
+      border-top: 1px solid var(--line);
+      background: var(--form-actions-bg);
+    }
+
+    .checkline {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-height: 42px;
+      padding-top: 18px;
+    }
+
+    .checkline input {
+      width: auto;
+      min-height: auto;
+      accent-color: var(--focus);
+    }
+
+    .checkline label {
+      margin: 0;
+      color: var(--ink);
+      text-transform: none;
+      font-size: 14px;
+      font-weight: 400;
+    }
+
+    .panel {
+      overflow: hidden;
+    }
+
+    .panel:hover {
+      box-shadow: var(--shadow-md);
+      transition: box-shadow 160ms ease;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: var(--space-3);
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .toolbar > div {
+      width: min(440px, 100%);
+    }
+
+    .toolbar .wide-control {
+      width: 100%;
+    }
+
+    .cert-toolbar {
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .cert-filter {
+      min-width: min(100%, 280px);
+    }
+
+    .segmented {
+      display: inline-flex;
+      gap: var(--space-1);
+      padding: var(--space-1);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+    }
+
+    .segmented button {
+      min-height: 34px;
+      border-color: transparent;
+      padding: 6px 10px;
+      color: var(--muted);
+    }
+
+    .segmented button.active {
+      background: var(--soft-blue);
+      color: var(--blue);
+      border-color: rgba(37, 99, 235, 0.26);
+    }
+
+    .locked {
+      padding: 24px 18px;
+      border-style: dashed;
+      background: var(--surface);
+    }
+
+    .locked strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+
+    .tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      min-height: 22px;
+      margin-left: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--amber);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .full-row {
+      grid-column: 1 / -1;
+    }
+
+    .pending-list {
+      display: grid;
+      gap: 10px;
+      padding: 16px 18px;
+    }
+
+    .pending-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(130px, auto);
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+    }
+
+    .pending-row strong,
+    .pending-row span {
+      display: block;
+    }
+
+    .pending-row small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pending-empty {
+      padding: 16px 18px;
+    }
+
+    .row-loading td {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    input[readonly] {
+      background: var(--surface-strong);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .table-scroll {
+      width: 100%;
+      overflow: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #b8c4d4 transparent;
+    }
+
+    .wide-table table {
+      min-width: 920px;
+    }
+
+    .cards-table table {
+      min-width: 780px;
+    }
+
+    .certifications-table table,
+    .station-rules-table table {
+      min-width: 980px;
+    }
+
+    .cert-person-row {
+      cursor: pointer;
+    }
+
+    .cert-person-row[aria-expanded="true"] td {
+      background: var(--soft-blue);
+    }
+
+    .cert-summary {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px 8px;
+    }
+
+    .cert-summary-item {
+      white-space: normal;
+    }
+
+    .cert-dot {
+      color: var(--muted);
+    }
+
+    .cert-detail-row td {
+      padding: 0;
+      background: var(--row-alt) !important;
+    }
+
+    .cert-detail {
+      padding: 12px 14px 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .cert-detail table {
+      min-width: 760px;
+    }
+
+    .warning-panel.has-warnings {
+      grid-column: 1 / -1;
+      order: -1;
+      border-color: var(--warning-panel-border);
+      background: var(--warning-panel-bg);
+      box-shadow: var(--shadow-md);
+    }
+
+    tr.row-warning td {
+      background: var(--soft-amber);
+    }
+
+    tr.row-denied td {
+      background: var(--soft-red);
+    }
+
+    tr.row-info td {
+      background: var(--soft-green);
+    }
+
+    tr.row-warning td:first-child,
+    tr.row-denied td:first-child,
+    tr.row-info td:first-child {
+      border-left: 4px solid var(--amber);
+    }
+
+    tr.row-denied td:first-child {
+      border-left-color: var(--red);
+    }
+
+    tr.row-info td:first-child {
+      border-left-color: var(--green);
+    }
+
+    .rule-controls {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) minmax(86px, auto);
+      gap: var(--space-2);
+      align-items: center;
+    }
+
+    .rule-controls select,
+    .rule-controls input[type="number"] {
+      min-height: 36px;
+      padding: 7px 9px;
+    }
+
+    .rule-controls input[type="number"] {
+      max-width: 96px;
+    }
+
+    .station-rules-table .checkline {
+      padding-top: 0;
+    }
+
+    .permission-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: var(--space-2);
+    }
+
+    .permission-list .checkline {
+      min-height: 34px;
+      padding-top: 0;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+    }
+
+    .permission-list .checkline span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    .permission-results {
+      display: grid;
+      gap: var(--space-3);
+      padding: 16px 18px 18px;
+    }
+
+    .permission-card {
+      display: grid;
+      grid-template-columns: minmax(180px, 0.65fr) minmax(0, 1fr) auto;
+      gap: var(--space-4);
+      align-items: center;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .permission-person {
+      display: grid;
+      gap: var(--space-2);
+    }
+
+    .permission-person strong {
+      color: var(--heading-ink);
+      font-size: 15px;
+    }
+
+    .permission-person small,
+    .permission-stations small {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .permission-stations {
+      display: grid;
+      gap: var(--space-2);
+    }
+
+    .permission-stations-header {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-3);
+      align-items: center;
+    }
+
+    .permission-stations-header span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    .permission-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .permission-empty {
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(2, 6, 23, 0.66);
+    }
+
+    .modal-card {
+      width: min(520px, 100%);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow-md);
+    }
+
+    .modal-card h2 {
+      padding: 18px 20px;
+      background: var(--surface);
+    }
+
+    .modal-body {
+      padding: 18px 20px;
+    }
+
+    .modal-body p {
+      margin: 0;
+      color: var(--ink);
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: var(--space-3);
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--line);
+      background: var(--form-actions-bg);
+    }
+
+    table {
+      width: 100%;
+      min-width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      font-size: 14px;
+      vertical-align: middle;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      color: var(--muted);
+      background: var(--surface);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.055em;
+      position: sticky;
+      top: 0;
+      text-transform: uppercase;
+      z-index: 1;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:nth-child(even) td {
+      background: var(--row-alt);
+    }
+
+    tbody tr:hover td {
+      background: var(--row-hover);
+    }
+
+    tr[data-card-id] {
+      cursor: pointer;
+    }
+
+    tr[data-card-id]:hover {
+      background: var(--row-hover);
+    }
+
+    .person {
+      display: grid;
+      gap: var(--space-1);
+    }
+
+    .person strong {
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .person small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.in {
+      color: var(--blue);
+      background: var(--soft-blue);
+    }
+
+    .badge.out {
+      color: var(--cyan);
+      background: var(--soft-cyan);
+    }
+
+    .badge.warn {
+      color: var(--amber);
+      background: var(--soft-amber);
+    }
+
+    .badge.empty {
+      color: var(--muted);
+      background: var(--soft-gray);
+    }
+
+    .badge.staff {
+      color: var(--staff-ink);
+      background: var(--staff-bg);
+    }
+
+    .badge.volunteer {
+      color: var(--volunteer-ink);
+      background: var(--soft-green);
+    }
+
+    .badge.user {
+      color: var(--blue);
+      background: var(--soft-blue);
+    }
+
+    .ok {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .error {
+      color: var(--red);
+      font-weight: 700;
+    }
+
+    .warning-panel {
+      border-color: var(--warning-panel-border);
+      background: var(--warning-panel-bg);
+    }
+
+    @media (max-width: 880px) {
+      main {
+        width: min(100vw - 24px, 1200px);
+        margin: 16px auto 32px;
+      }
+
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+
+      .header-tools,
+      .access-panel {
+        justify-content: flex-start;
+        width: 100%;
+      }
+
+      .access-panel input {
+        width: min(100%, 260px);
+      }
+
+      .access-status {
+        min-width: 0;
+        text-align: left;
+        justify-content: flex-start;
+      }
+
+      .tabs {
+        overflow-x: auto;
+      }
+
+      .tab-button {
+        flex: 0 0 auto;
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .pending-row {
+        grid-template-columns: 1fr;
+      }
+
+      .grid,
+      .card-editor-layout,
+      .form-grid,
+      .account-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #card-form.show-account-fields .card-editor-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .permission-card {
+        grid-template-columns: 1fr;
+      }
+
+      .permission-actions {
+        justify-content: flex-start;
+      }
+
+      .form-grid .full {
+        grid-column: auto;
+      }
+
+      th,
+      td {
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+
+      .table-scroll table {
+        min-width: 640px;
+      }
+    }
+
+    @media (max-width: 620px) {
+      main {
+        width: min(100vw - 16px, 1200px);
+        margin-top: 8px;
+      }
+
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .metric {
+        min-height: 108px;
+      }
+
+      .metric strong {
+        font-size: 36px;
+      }
+
+      .form-actions {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .form-actions button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Station Dashboard</h1>
+      </div>
+      <div class="header-tools">
+        <div class="access-panel" aria-label="Access controls">
+          <div>
+            <label for="access-login-id">Login</label>
+            <input id="access-login-id" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="you@example.com or card ID">
+          </div>
+          <div>
+            <label for="access-password">Password</label>
+            <input id="access-password" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Password">
+          </div>
+          <button id="access-login" class="primary" type="button">Unlock</button>
+          <button id="access-logout" class="hidden" type="button">Lock</button>
+          <div id="access-status" class="subtle access-status" aria-live="polite" aria-atomic="true">View only</div>
+        </div>
+        <div id="connection" class="subtle" aria-live="polite" aria-atomic="true">Connecting...</div>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Main views">
+      <button class="tab-button active" data-tab="dashboard" type="button">Live</button>
+      <button class="tab-button hidden" data-tab="swipes" type="button">Swipes</button>
+      <button class="tab-button hidden" data-tab="certifications" type="button">Certifications</button>
+      <button class="tab-button hidden" data-tab="cards" type="button">
+        Cards
+        <span id="pending-card-count" class="tab-badge hidden">0</span>
+      </button>
+      <button class="tab-button hidden" data-tab="admin" type="button">Admin</button>
+    </nav>
+
+    <section id="tab-dashboard" class="tab-panel active">
+      <section class="summary">
+        <div id="people-metric" class="metric">
+          <span>People Inside</span>
+          <strong id="total-active">0</strong>
+        </div>
+        <div id="stations-metric" class="metric">
+          <span>Active Stations</span>
+          <strong id="active-stations">0</strong>
+        </div>
+        <div id="warnings-metric" class="metric">
+          <span>Warnings</span>
+          <strong id="warning-count" aria-live="polite" aria-atomic="true">0</strong>
+        </div>
+        <div id="last-swipe-metric" class="metric">
+          <span>Last Swipe</span>
+          <strong id="last-swipe">--</strong>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div id="people-panel" class="panel">
+          <h2>People Inside</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Door</th>
+                  <th>Inside For</th>
+                </tr>
+              </thead>
+              <tbody id="people-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="station-usage-panel" class="panel">
+          <h2>Station Usage</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Station</th>
+                  <th>Active</th>
+                  <th id="station-people-header">People</th>
+                </tr>
+              </thead>
+              <tbody id="stations-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div id="active-sessions-panel" class="panel">
+          <h2>Active Station Sessions</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Station</th>
+                  <th>Elapsed</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="warnings-panel" class="panel warning-panel">
+          <h2>Warnings</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Person</th>
+                  <th>Issue</th>
+                </tr>
+              </thead>
+              <tbody id="warnings-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </section>
+
+    <section id="tab-swipes" class="tab-panel">
+      <section id="recent-swipes-panel" class="panel">
+        <div class="panel-heading">
+          <h2>Recent Swipes</h2>
+          <button id="download-swipes" type="button">Export CSV</button>
+        </div>
+        <div class="table-scroll wide-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Person</th>
+                <th>Place</th>
+                <th>Action</th>
+                <th>Duration</th>
+                <th>Inside</th>
+                <th>Warning</th>
+              </tr>
+            </thead>
+            <tbody id="swipes-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-certifications" class="tab-panel">
+      <div id="cert-lock" class="panel locked">
+        <strong>Login required</strong>
+        <span class="subtle">Certifications are visible after Admin, Staff, or Volunteer access is unlocked.</span>
+      </div>
+
+      <section id="cert-content" class="grid hidden">
+        <div id="cert-edit-panel" class="panel">
+          <h2>Certification</h2>
+          <form id="cert-form">
+            <div class="form-grid">
+              <div>
+                <label for="cert-card-search">Person</label>
+                <div class="lookup-wrap">
+                  <input id="cert-card-search" autocomplete="off" required placeholder="Search name or student ID">
+                  <div id="cert-card-results" class="lookup-results hidden"></div>
+                </div>
+              </div>
+              <div>
+                <label for="cert-station-search">Station</label>
+                <div class="lookup-wrap">
+                  <input id="cert-station-search" autocomplete="off" required placeholder="Search station">
+                  <div id="cert-station-results" class="lookup-results hidden"></div>
+                </div>
+              </div>
+              <div class="full">
+                <label for="cert-notes">Notes</label>
+                <textarea id="cert-notes"></textarea>
+              </div>
+              <div class="checkline">
+                <input id="cert-active" type="checkbox" checked>
+                <label for="cert-active">Active certification</label>
+              </div>
+            </div>
+            <div class="form-actions">
+              <span id="cert-status" class="subtle" aria-live="polite" aria-atomic="true"></span>
+              <button class="primary" type="submit">Save Certification</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="panel full-row">
+          <h2>Current Certifications</h2>
+          <div class="toolbar cert-toolbar">
+            <div class="segmented" aria-label="Certification view">
+              <button class="active" type="button" data-cert-view="all">All</button>
+              <button type="button" data-cert-view="person">View by Person</button>
+              <button type="button" data-cert-view="station">View by Station</button>
+            </div>
+            <div id="cert-person-filter-wrap" class="cert-filter hidden">
+              <label for="cert-person-filter">Person Lookup</label>
+              <div class="lookup-wrap">
+                <input id="cert-person-filter" autocomplete="off" placeholder="Search name or student ID">
+                <div id="cert-person-results" class="lookup-results hidden"></div>
+              </div>
+            </div>
+            <div id="cert-station-filter-wrap" class="cert-filter hidden">
+              <label for="cert-station-filter">Station Lookup</label>
+              <div class="lookup-wrap">
+                <input id="cert-station-filter" autocomplete="off" placeholder="Search station">
+                <div id="cert-station-filter-results" class="lookup-results hidden"></div>
+              </div>
+            </div>
+          </div>
+          <div class="table-scroll certifications-table">
+            <table>
+              <thead>
+                <tr id="certifications-head">
+                  <th>Person</th>
+                  <th>Station</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                  <th>Notes</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="certifications-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-admin" class="tab-panel">
+      <section class="grid">
+        <div id="station-rules-panel" class="panel full-row">
+          <h2>Station Rules</h2>
+          <div class="table-scroll station-rules-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Station</th>
+                  <th>Require Certification</th>
+                  <th>Temporary Override</th>
+                  <th>Expires</th>
+                  <th>Enabled By</th>
+                </tr>
+              </thead>
+              <tbody id="station-rules-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="certify-permissions-panel" class="panel full-row hidden">
+          <h2>Certify Permissions</h2>
+          <p class="panel-note">These permissions control who can grant certifications from this website and through the station reader double-swipe flow.</p>
+          <div class="toolbar">
+            <div>
+              <label for="certify-permission-filter">Person Lookup</label>
+              <input id="certify-permission-filter" autocomplete="off" placeholder="Search name, student ID, staff, or volunteer">
+            </div>
+          </div>
+          <div id="certify-permissions-body" class="permission-results"></div>
+        </div>
+
+        <section id="audit-panel" class="panel full-row hidden">
+          <div class="panel-heading">
+            <h2>Audit Log</h2>
+            <button id="download-audit" type="button">Export CSV</button>
+          </div>
+          <div class="table-scroll wide-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Login</th>
+                  <th>Action</th>
+                  <th>Target</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="audit-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </section>
+
+    <section id="tab-cards" class="tab-panel">
+      <div id="card-lock" class="panel locked">
+        <strong>Staff or volunteer password required</strong>
+        <span class="subtle">Card database editing is locked until access is unlocked.</span>
+      </div>
+
+      <section id="card-content" class="grid hidden">
+        <div class="panel full-row">
+          <h2>Pending Cards</h2>
+          <div id="pending-cards-body" class="pending-list"></div>
+        </div>
+
+        <div class="panel full-row">
+          <h2>Card</h2>
+          <form id="card-form">
+            <div class="card-editor-layout">
+              <div class="form-grid">
+                <div>
+                  <label for="card-id">Card ID</label>
+                  <input id="card-id" required placeholder="RFID number from reader" title="Use the exact card ID reported by the RFID reader.">
+                </div>
+                <div>
+                  <label for="card-name">Name</label>
+                  <input id="card-name" required>
+                </div>
+                <div>
+                  <label for="card-email">Email</label>
+                  <input id="card-email" type="email">
+                </div>
+                <div>
+                  <label for="card-student-id">Student ID</label>
+                  <input id="card-student-id" autocomplete="off">
+                </div>
+                <div>
+                  <label for="card-designation">Designation</label>
+                  <select id="card-designation">
+                    <option>Staff</option>
+                    <option>Volunteer</option>
+                    <option selected>User</option>
+                  </select>
+                </div>
+                <div class="full">
+                  <label for="card-notes">Notes</label>
+                  <textarea id="card-notes"></textarea>
+                </div>
+                <div class="checkline">
+                  <input id="card-active" type="checkbox" checked>
+                  <label for="card-active">Active card</label>
+                </div>
+              </div>
+              <div id="account-fields" class="account-fields hidden">
+                <h3>Dashboard Login</h3>
+                <div class="account-grid">
+                  <div>
+                    <label for="login-role">Access Level</label>
+                    <select id="login-role">
+                      <option value="">No dashboard login</option>
+                      <option value="admin">Admin</option>
+                      <option value="staff">Staff</option>
+                      <option value="volunteer">Volunteer</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="login-password">Password</label>
+                    <input id="login-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep existing">
+                  </div>
+                  <div class="checkline">
+                    <input id="login-active" type="checkbox" checked>
+                    <label for="login-active">Login active</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="form-actions">
+              <span id="card-status" class="subtle" aria-live="polite" aria-atomic="true"></span>
+              <button class="danger hidden" type="button" id="delete-card">Delete Card</button>
+              <button type="button" id="clear-card">Clear</button>
+              <button class="primary" type="submit">Save Card</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="panel full-row">
+          <h2>Cards</h2>
+          <div class="toolbar">
+            <div class="wide-control">
+              <label for="card-filter">Lookup</label>
+              <input id="card-filter" autocomplete="off" placeholder="Search name, student ID, staff, volunteer, or user">
+            </div>
+          </div>
+          <div class="table-scroll cards-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Card ID</th>
+                  <th>Email</th>
+                  <th>Student ID</th>
+                </tr>
+              </thead>
+              <tbody id="cards-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div id="confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="modal-card">
+      <h2 id="confirm-title">Confirm Action</h2>
+      <div class="modal-body">
+        <p id="confirm-message"></p>
+      </div>
+      <div class="modal-actions">
+        <button id="confirm-cancel" type="button">Cancel</button>
+        <button id="confirm-accept" class="danger" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      cards: [],
+      stations: [],
+      certifications: [],
+      certifyPermissions: [],
+      auditLog: [],
+      canCertifyStationIds: [],
+      pendingCards: [],
+      token: localStorage.getItem("stationAccessToken") || "",
+      role: localStorage.getItem("stationAccessRole") || "",
+      userName: localStorage.getItem("stationAccessName") || "",
+      cardFilter: "",
+      certViewMode: "all",
+      certPersonFilter: "",
+      certStationFilter: "",
+      certifyPermissionFilter: "",
+      selectedCardId: "",
+      selectedCertCardId: "",
+      selectedCertPersonFilterCardId: "",
+      selectedCertStationId: "",
+      selectedCertStationFilterStationId: "",
+      expandedCertificationCards: new Set(),
+      dashboardRequestInFlight: false,
+      pendingCardsRequestInFlight: false,
+      hasDashboardLoaded: false,
+      lastDashboardSuccessAt: "",
+      lastDashboardData: null,
+      lastWarningCount: 0,
+      warningPulseTimer: null
+    };
+
+    const connection = document.getElementById("connection");
+    const warningsMetric = document.getElementById("warnings-metric");
+    const totalActive = document.getElementById("total-active");
+    const activeStations = document.getElementById("active-stations");
+    const warningCount = document.getElementById("warning-count");
+    const lastSwipe = document.getElementById("last-swipe");
+    const peoplePanel = document.getElementById("people-panel");
+    const stationUsagePanel = document.getElementById("station-usage-panel");
+    const stationPeopleHeader = document.getElementById("station-people-header");
+    const activeSessionsPanel = document.getElementById("active-sessions-panel");
+    const warningsPanel = document.getElementById("warnings-panel");
+    const recentSwipesPanel = document.getElementById("recent-swipes-panel");
+    const downloadSwipesButton = document.getElementById("download-swipes");
+    const downloadAuditButton = document.getElementById("download-audit");
+    const peopleBody = document.getElementById("people-body");
+    const stationsBody = document.getElementById("stations-body");
+    const sessionsBody = document.getElementById("sessions-body");
+    const warningsBody = document.getElementById("warnings-body");
+    const swipesBody = document.getElementById("swipes-body");
+    const auditPanel = document.getElementById("audit-panel");
+    const auditBody = document.getElementById("audit-body");
+    const cardsBody = document.getElementById("cards-body");
+    const certificationsHead = document.getElementById("certifications-head");
+    const certificationsBody = document.getElementById("certifications-body");
+    const certCardSearch = document.getElementById("cert-card-search");
+    const certCardResults = document.getElementById("cert-card-results");
+    const certStationSearch = document.getElementById("cert-station-search");
+    const certStationResults = document.getElementById("cert-station-results");
+    const certPersonFilter = document.getElementById("cert-person-filter");
+    const certPersonResults = document.getElementById("cert-person-results");
+    const certStationFilter = document.getElementById("cert-station-filter");
+    const certStationFilterResults = document.getElementById("cert-station-filter-results");
+    const certPersonFilterWrap = document.getElementById("cert-person-filter-wrap");
+    const certStationFilterWrap = document.getElementById("cert-station-filter-wrap");
+    const accessLoginId = document.getElementById("access-login-id");
+    const accessPassword = document.getElementById("access-password");
+    const accessLogin = document.getElementById("access-login");
+    const accessLogout = document.getElementById("access-logout");
+    const accessStatus = document.getElementById("access-status");
+    const certLock = document.getElementById("cert-lock");
+    const certContent = document.getElementById("cert-content");
+    const certEditPanel = document.getElementById("cert-edit-panel");
+    const stationRulesPanel = document.getElementById("station-rules-panel");
+    const stationRulesBody = document.getElementById("station-rules-body");
+    const certifyPermissionsPanel = document.getElementById("certify-permissions-panel");
+    const certifyPermissionFilter = document.getElementById("certify-permission-filter");
+    const certifyPermissionsBody = document.getElementById("certify-permissions-body");
+    const cardLock = document.getElementById("card-lock");
+    const cardContent = document.getElementById("card-content");
+    const cardFilter = document.getElementById("card-filter");
+    const pendingCardCount = document.getElementById("pending-card-count");
+    const pendingCardsBody = document.getElementById("pending-cards-body");
+    const deleteCardButton = document.getElementById("delete-card");
+    const accountFields = document.getElementById("account-fields");
+    const confirmModal = document.getElementById("confirm-modal");
+    const confirmTitle = document.getElementById("confirm-title");
+    const confirmMessage = document.getElementById("confirm-message");
+    const confirmCancel = document.getElementById("confirm-cancel");
+    const confirmAccept = document.getElementById("confirm-accept");
+    let confirmResolver = null;
+    let dashboardPollId = null;
+    let pendingCardsPollId = null;
+
+    const DASHBOARD_POLL_MS = 4000;
+    const HIDDEN_DASHBOARD_POLL_MS = 15000;
+    const PENDING_CARDS_POLL_MS = 12000;
+    const HIDDEN_PENDING_CARDS_POLL_MS = 30000;
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatTime(value) {
+      if (!value) return "--";
+      return new Date(value).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "--";
+      return new Date(value).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    function formatDuration(seconds) {
+      if (seconds === null || seconds === undefined || seconds === "") return "--";
+      seconds = Number(seconds);
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      if (minutes > 0) return `${minutes}m ${secs}s`;
+      return `${secs}s`;
+    }
+
+    function emptyRow(colspan, text) {
+      return `<tr><td colspan="${colspan}" class="subtle">${text}</td></tr>`;
+    }
+
+    function loadingRow(colspan) {
+      return `<tr class="row-loading"><td colspan="${colspan}">Loading...</td></tr>`;
+    }
+
+    function renderInitialLoadingState() {
+      totalActive.textContent = "--";
+      activeStations.textContent = "--";
+      warningCount.textContent = "--";
+      lastSwipe.textContent = "--";
+      peopleBody.innerHTML = loadingRow(3);
+      stationsBody.innerHTML = loadingRow(3);
+      sessionsBody.innerHTML = loadingRow(3);
+      warningsBody.innerHTML = loadingRow(3);
+      swipesBody.innerHTML = loadingRow(7);
+    }
+
+    function debounce(callback, delay = 180) {
+      let timeoutId = null;
+      return (...args) => {
+        window.clearTimeout(timeoutId);
+        timeoutId = window.setTimeout(() => callback(...args), delay);
+      };
+    }
+
+    function setConnectionStatus(message, className = "", assertive = false, detail = "") {
+      connection.setAttribute("aria-live", assertive ? "assertive" : "polite");
+      const detailText = detail ? ` <span class="subtle">${escapeHtml(detail)}</span>` : "";
+      connection.innerHTML = `<span class="${escapeHtml(className)}">${escapeHtml(message)}</span>${detailText}`;
+    }
+
+    function sessionExpired(message = "Session expired - log in again") {
+      setAccess({});
+      renderAdmin();
+      accessStatus.textContent = message;
+      if (state.lastDashboardData) {
+        renderDashboard({
+          ...state.lastDashboardData,
+          dashboard_access: "public",
+          active_people: [],
+          active_sessions: [],
+          warnings: [],
+          recent_swipes: []
+        });
+      }
+      setConnectionStatus(message, "error", true);
+    }
+
+    function issueRowClass(row) {
+      if (row.allowed === false) return "row-denied";
+      if (row.warning === "cert_granted_via_swipe") return "row-info";
+      if (row.warning) return "row-warning";
+      return "";
+    }
+
+    function closeConfirmDialog(result) {
+      confirmModal.classList.add("hidden");
+      confirmAccept.classList.remove("danger");
+      if (confirmResolver) {
+        confirmResolver(result);
+        confirmResolver = null;
+      }
+    }
+
+    function showConfirmDialog({ title, message, confirmText = "Confirm", danger = false }) {
+      confirmTitle.textContent = title;
+      confirmMessage.textContent = message;
+      confirmAccept.textContent = confirmText;
+      confirmAccept.classList.toggle("danger", danger);
+      confirmModal.classList.remove("hidden");
+      confirmCancel.focus();
+
+      return new Promise(resolve => {
+        confirmResolver = resolve;
+      });
+    }
+
+    function designationClass(value) {
+      return String(value || "User").toLowerCase();
+    }
+
+    function personCell(row) {
+      const name = row.display_name || row.name || "Unknown";
+      const designation = row.designation || "";
+      const badge = designation
+        ? `<span class="badge ${designationClass(designation)}">${escapeHtml(designation)}</span>`
+        : "";
+      return `
+        <div class="person">
+          <strong>${escapeHtml(name)}</strong>
+          <small>${badge}</small>
+        </div>
+      `;
+    }
+
+    function actionClass(action, allowed) {
+      if (!allowed) return "warn";
+      if (action === "certification_granted") return "in";
+      if (action === "exit" || action === "station_out" || action === "station_auto_out") return "out";
+      if (action === "enter" || action === "station_in") return "in";
+      return "empty";
+    }
+
+    function actionLabel(action) {
+      if (action === "certification_granted") return "certified";
+      return action;
+    }
+
+    function warningLabel(warning) {
+      if (warning === "cert_granted_via_swipe") return "via swipe";
+      return warning;
+    }
+
+    function auditActionLabel(action) {
+      return String(action || "--").replaceAll("_", " ");
+    }
+
+    function auditActorCell(entry) {
+      const name = entry.actor_name || entry.actor_card_id || "System";
+      const role = entry.actor_role || "";
+      const badge = role
+        ? `<span class="badge ${designationClass(role)}">${escapeHtml(role)}</span>`
+        : "";
+      const cardId = entry.actor_card_id
+        ? ` ${escapeHtml(entry.actor_card_id)}`
+        : "";
+
+      return `
+        <div class="person">
+          <strong>${escapeHtml(name)}</strong>
+          <small>${badge}${cardId}</small>
+        </div>
+      `;
+    }
+
+    function auditDetailsText(details) {
+      const entries = Object.entries(details || {}).filter(([, value]) => (
+        value !== null && value !== undefined && value !== ""
+      ));
+
+      if (!entries.length) return "--";
+
+      return entries
+        .map(([key, value]) => {
+          const label = key.replaceAll("_", " ");
+          const text = Array.isArray(value) ? value.join(", ") : String(value);
+          return `${label}: ${text}`;
+        })
+        .join(" | ");
+    }
+
+    function canEditCards() {
+      return ["admin", "staff", "volunteer"].includes(state.role);
+    }
+
+    function canViewCertifications() {
+      return ["admin", "staff", "volunteer"].includes(state.role);
+    }
+
+    function canManageCertifyPermissions() {
+      return state.role === "admin";
+    }
+
+    function canCertifyStation(stationId) {
+      return state.role === "admin" || state.canCertifyStationIds.includes(stationId);
+    }
+
+    function certFormStations() {
+      if (state.role === "admin") return state.stations;
+      return state.stations.filter(station => canCertifyStation(station.station_id));
+    }
+
+    function canSubmitCertifications() {
+      return state.role === "admin" || certFormStations().length > 0;
+    }
+
+    function canEditCertifications() {
+      return canSubmitCertifications();
+    }
+
+    function canManageStationRules() {
+      return state.role === "admin" || state.role === "staff";
+    }
+
+    function canManageAccounts() {
+      return state.role === "admin";
+    }
+
+    function tabButton(tabName) {
+      return document.querySelector(`.tab-button[data-tab="${tabName}"]`);
+    }
+
+    function setTabVisible(tabName, visible) {
+      const button = tabButton(tabName);
+      const panel = document.getElementById(`tab-${tabName}`);
+      if (button) {
+        button.classList.toggle("hidden", !visible);
+        if (!visible) button.classList.remove("active");
+      }
+      if (panel && !visible) panel.classList.remove("active");
+    }
+
+    function activateTab(tabName, shouldRefresh = true) {
+      const button = tabButton(tabName);
+      const panel = document.getElementById(`tab-${tabName}`);
+      if (!button || !panel || button.classList.contains("hidden")) {
+        if (tabName !== "dashboard") activateTab("dashboard", false);
+        return;
+      }
+
+      document.querySelectorAll(".tab-button").forEach(item => item.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(item => item.classList.remove("active"));
+      button.classList.add("active");
+      panel.classList.add("active");
+      if (shouldRefresh && tabName === "swipes") refreshDashboard();
+      if (shouldRefresh && tabName !== "dashboard" && tabName !== "swipes") refreshAdmin();
+    }
+
+    function updateTabVisibility(role) {
+      const loggedIn = ["admin", "staff", "volunteer"].includes(role);
+      const elevated = ["admin", "staff"].includes(role);
+
+      setTabVisible("dashboard", true);
+      setTabVisible("swipes", elevated);
+      setTabVisible("certifications", loggedIn);
+      setTabVisible("cards", loggedIn);
+      setTabVisible("admin", elevated);
+
+      const activePanel = document.querySelector(".tab-panel.active");
+      if (!activePanel) {
+        activateTab("dashboard", false);
+        return;
+      }
+      const activeTab = activePanel ? activePanel.id.replace("tab-", "") : "dashboard";
+      const activeButton = tabButton(activeTab);
+      if (!activeButton || activeButton.classList.contains("hidden")) {
+        activateTab("dashboard", false);
+      }
+    }
+
+    function updateDeleteCardUi() {
+      const canDelete = canManageAccounts() && Boolean(state.selectedCardId);
+      deleteCardButton.classList.toggle("hidden", !canDelete);
+      deleteCardButton.disabled = !canDelete;
+    }
+
+    function certifyPermissionAccounts() {
+      return state.cards.filter(card => {
+        const role = String(card.login_role || "").toLowerCase();
+        return card.has_login && card.login_active && ["staff", "volunteer"].includes(role);
+      });
+    }
+
+    function authHeaders() {
+      return state.token ? { "X-Access-Token": state.token } : {};
+    }
+
+    function updateAccessUi() {
+      const cardAccess = canEditCards();
+      const certViewAccess = canViewCertifications();
+      const certEditAccess = canSubmitCertifications();
+      const stationRuleAccess = canManageStationRules();
+
+      accessStatus.textContent = state.role === "admin"
+        ? `Admin unlocked${state.userName ? ": " + state.userName : ""}`
+        : state.role === "staff"
+          ? `Staff unlocked${state.userName ? ": " + state.userName : ""}`
+          : state.role === "volunteer"
+            ? `Volunteer unlocked${state.userName ? ": " + state.userName : ""}`
+            : "View only";
+
+      accessLoginId.disabled = Boolean(state.role);
+      accessPassword.disabled = Boolean(state.role);
+      accessPassword.value = state.role ? "" : accessPassword.value;
+      accessLogin.classList.toggle("hidden", Boolean(state.role));
+      accessLogout.classList.toggle("hidden", !state.role);
+      accessStatus.classList.toggle("access-unlocked", Boolean(state.role));
+      accessStatus.classList.toggle("access-locked", !state.role);
+      accountFields.classList.toggle("hidden", !canManageAccounts());
+      document.getElementById("card-form").classList.toggle("show-account-fields", canManageAccounts());
+      updateTabVisibility(state.role || "public");
+
+      certLock.classList.toggle("hidden", certViewAccess);
+      certContent.classList.toggle("hidden", !certViewAccess);
+      certEditPanel.classList.toggle("hidden", !certEditAccess);
+      stationRulesPanel.classList.toggle("hidden", !stationRuleAccess);
+      certifyPermissionsPanel.classList.toggle("hidden", !canManageCertifyPermissions());
+      cardLock.classList.toggle("hidden", cardAccess);
+      cardContent.classList.toggle("hidden", !cardAccess);
+
+      document.querySelectorAll("#cert-form input, #cert-form textarea, #cert-form button").forEach(item => {
+        item.disabled = !certEditAccess;
+      });
+      document.querySelectorAll("#card-form input, #card-form select, #card-form textarea, #card-form button").forEach(item => {
+        item.disabled = !cardAccess;
+      });
+      updateDeleteCardUi();
+    }
+
+    function setAccess(data) {
+      state.role = data.role || "";
+      state.token = data.access_token || "";
+      state.userName = data.name || "";
+      state.auditLog = data.audit_log || [];
+      state.selectedCardId = "";
+      updateDashboardVisibility({ dashboard_access: state.role || "public" });
+
+      if (state.role && state.token) {
+        localStorage.setItem("stationAccessToken", state.token);
+        localStorage.setItem("stationAccessRole", state.role);
+        localStorage.setItem("stationAccessName", state.userName);
+      } else {
+        localStorage.removeItem("stationAccessToken");
+        localStorage.removeItem("stationAccessRole");
+        localStorage.removeItem("stationAccessName");
+        state.cards = [];
+        state.stations = [];
+        state.certifications = [];
+        state.certifyPermissions = [];
+        state.canCertifyStationIds = [];
+        state.selectedCertCardId = "";
+        state.selectedCertPersonFilterCardId = "";
+        state.selectedCertStationId = "";
+        state.selectedCertStationFilterStationId = "";
+      }
+
+      updateAccessUi();
+    }
+
+    function cardSearchLabel(card) {
+      const parts = [
+        card.display_name || card.name || card.card_id,
+        card.student_id
+      ].filter(Boolean);
+      return parts.join(" | ");
+    }
+
+    function cardSearchText(card) {
+      return [
+        card.display_name,
+        card.name,
+        card.student_id
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function cardRosterSearchText(card) {
+      return [
+        card.display_name,
+        card.name,
+        card.student_id,
+        card.designation,
+        card.login_role,
+        card.active ? "active" : "inactive"
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function cardSearchRank(card, query) {
+      const fields = [
+        card.display_name,
+        card.name,
+        card.student_id
+      ].filter(Boolean).map(value => String(value).toLowerCase());
+
+      if (fields.some(value => value === query)) return 0;
+      if (fields.some(value => value.startsWith(query))) return 1;
+      return 2;
+    }
+
+    function certCardMatches(value, limit = 8) {
+      const query = String(value || "").trim().toLowerCase();
+      if (!query) return [];
+
+      return state.cards
+        .filter(card => cardSearchText(card).includes(query))
+        .sort((a, b) => (
+          cardSearchRank(a, query) - cardSearchRank(b, query)
+          || (a.display_name || a.name || a.card_id).localeCompare(
+            b.display_name || b.name || b.card_id
+          )
+        ))
+        .slice(0, limit);
+    }
+
+    function stationSearchLabel(station) {
+      return station.station_name;
+    }
+
+    function stationSearchText(station) {
+      return [
+        station.station_name,
+        station.station_id
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function stationSearchRank(station, query) {
+      const fields = [
+        station.station_name,
+        station.station_id
+      ].filter(Boolean).map(value => String(value).toLowerCase());
+
+      if (fields.some(value => value === query)) return 0;
+      if (fields.some(value => value.startsWith(query))) return 1;
+      return 2;
+    }
+
+    function stationMatches(value, stations, limit = 8) {
+      const query = String(value || "").trim().toLowerCase();
+      if (!query) return [];
+
+      return stations
+        .filter(station => stationSearchText(station).includes(query))
+        .sort((a, b) => (
+          stationSearchRank(a, query) - stationSearchRank(b, query)
+          || a.station_name.localeCompare(b.station_name)
+        ))
+        .slice(0, limit);
+    }
+
+    function findCardFromSearch(value) {
+      const query = String(value || "").trim().toLowerCase();
+      return state.cards.find(card => {
+        return cardSearchLabel(card).toLowerCase() === query
+          || (card.name || "").toLowerCase() === query
+          || (card.display_name || "").toLowerCase() === query
+          || (card.student_id || "").toLowerCase() === query;
+      });
+    }
+
+    function findStationFromSearch(value) {
+      const query = String(value || "").trim().toLowerCase();
+      return state.stations.find(station => {
+        return station.station_id.toLowerCase() === query
+          || stationSearchLabel(station).toLowerCase() === query
+          || station.station_name.toLowerCase() === query;
+      });
+    }
+
+    function certPersonText(cert) {
+      return [
+        cert.display_name,
+        cert.name,
+        cert.student_id
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function certStationText(cert) {
+      return [
+        cert.station_name,
+        cert.station_id
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function filteredCertifications() {
+      if (state.certViewMode === "person") {
+        const query = state.certPersonFilter.trim().toLowerCase();
+        if (!query) return [];
+
+        const card = state.cards.find(item => item.card_id === state.selectedCertPersonFilterCardId)
+          || findCardFromSearch(state.certPersonFilter);
+        if (card) {
+          return state.certifications.filter(cert => cert.card_id === card.card_id);
+        }
+
+        return state.certifications.filter(cert => certPersonText(cert).includes(query));
+      }
+
+      if (state.certViewMode === "station") {
+        const query = state.certStationFilter.trim().toLowerCase();
+        if (!query) return [];
+
+        const station = state.stations.find(item => item.station_id === state.selectedCertStationFilterStationId)
+          || findStationFromSearch(state.certStationFilter);
+        if (station) {
+          return state.certifications.filter(cert => cert.station_id === station.station_id);
+        }
+
+        return state.certifications.filter(cert => certStationText(cert).includes(query));
+      }
+
+      return state.certifications;
+    }
+
+    function certificationEmptyMessage() {
+      if (state.certViewMode === "person" && !state.certPersonFilter.trim()) {
+        return "Search for a person to view their certifications";
+      }
+      if (state.certViewMode === "station" && !state.certStationFilter.trim()) {
+        return "Search for a station to view certified people";
+      }
+      if (state.certViewMode === "person") return "No certifications saved for this person";
+      if (state.certViewMode === "station") return "No certifications saved for this station";
+      if (!state.certifications.length) return "No certifications saved";
+      return "No matching certifications";
+    }
+
+    function certificationStatusText(cert) {
+      return cert.active ? "Active" : "Inactive";
+    }
+
+    function certificationStatusBadge(cert) {
+      return `<span class="badge ${cert.active ? "in" : "empty"}">${certificationStatusText(cert)}</span>`;
+    }
+
+    function certificationActionCell(cert) {
+      if (!canCertifyStation(cert.station_id) || !cert.active) return "--";
+      return `<button class="danger" type="button" data-cert-revoke-card-id="${escapeHtml(cert.card_id)}" data-cert-revoke-station-id="${escapeHtml(cert.station_id)}">Revoke</button>`;
+    }
+
+    function renderCertificationRows(rows) {
+      return rows.map(cert => `
+        <tr>
+          <td>${personCell(cert)}</td>
+          <td>${escapeHtml(cert.station_name)}</td>
+          <td>${certificationStatusBadge(cert)}</td>
+          <td>${formatDateTime(cert.updated_at)}</td>
+          <td>${escapeHtml(cert.notes || "--")}</td>
+          <td>${certificationActionCell(cert)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function certificationPersonGroups() {
+      const groups = new Map();
+      state.certifications.forEach(cert => {
+        if (!groups.has(cert.card_id)) {
+          groups.set(cert.card_id, {
+            person: cert,
+            certifications: []
+          });
+        }
+        groups.get(cert.card_id).certifications.push(cert);
+      });
+
+      return Array.from(groups.values())
+        .map(group => ({
+          ...group,
+          certifications: group.certifications.slice().sort((a, b) => {
+            return a.station_name.localeCompare(b.station_name);
+          })
+        }))
+        .sort((a, b) => {
+          const aName = (a.person.display_name || a.person.name || a.person.card_id).toLowerCase();
+          const bName = (b.person.display_name || b.person.name || b.person.card_id).toLowerCase();
+          return aName.localeCompare(bName);
+        });
+    }
+
+    function renderCertificationSummary(certifications) {
+      return certifications.map(cert => `
+        <span class="cert-summary-item">
+          ${escapeHtml(cert.station_name)}
+          <span class="subtle">(${certificationStatusText(cert)})</span>
+        </span>
+      `).join(`<span class="cert-dot" aria-hidden="true">&middot;</span>`);
+    }
+
+    function renderCertificationDetailTable(certifications) {
+      return `
+        <div class="cert-detail">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Station</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                  <th>Notes</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${certifications.map(cert => `
+                  <tr>
+                    <td>${escapeHtml(cert.station_name)}</td>
+                    <td>${certificationStatusBadge(cert)}</td>
+                    <td>${formatDateTime(cert.updated_at)}</td>
+                    <td>${escapeHtml(cert.notes || "--")}</td>
+                    <td>${certificationActionCell(cert)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCertificationHeader() {
+      certificationsHead.innerHTML = state.certViewMode === "all"
+        ? `
+          <th>Person</th>
+          <th colspan="5">Certified Stations</th>
+        `
+        : `
+          <th>Person</th>
+          <th>Station</th>
+          <th>Status</th>
+          <th>Updated</th>
+          <th>Notes</th>
+          <th>Action</th>
+        `;
+    }
+
+    function renderCertifications() {
+      document.querySelectorAll("[data-cert-view]").forEach(button => {
+        button.classList.toggle("active", button.dataset.certView === state.certViewMode);
+      });
+      certPersonFilterWrap.classList.toggle("hidden", state.certViewMode !== "person");
+      certStationFilterWrap.classList.toggle("hidden", state.certViewMode !== "station");
+      renderCertificationHeader();
+
+      if (state.certViewMode === "all") {
+        const groups = certificationPersonGroups();
+        certificationsBody.innerHTML = groups.length
+          ? groups.map(group => {
+            const expanded = state.expandedCertificationCards.has(group.person.card_id);
+            return `
+              <tr class="cert-person-row" data-cert-person-card-id="${escapeHtml(group.person.card_id)}" aria-expanded="${expanded ? "true" : "false"}">
+                <td>${personCell(group.person)}</td>
+                <td colspan="5">
+                  <div class="cert-summary">${renderCertificationSummary(group.certifications)}</div>
+                </td>
+              </tr>
+              ${expanded ? `
+                <tr class="cert-detail-row">
+                  <td colspan="6">${renderCertificationDetailTable(group.certifications)}</td>
+                </tr>
+              ` : ""}
+            `;
+          }).join("")
+          : emptyRow(6, certificationEmptyMessage());
+      } else {
+        const rows = filteredCertifications();
+        certificationsBody.innerHTML = rows.length
+          ? renderCertificationRows(rows)
+          : emptyRow(6, certificationEmptyMessage());
+      }
+
+      certificationsBody.querySelectorAll("tr[data-cert-person-card-id]").forEach(row => {
+        row.addEventListener("click", () => {
+          const cardId = row.dataset.certPersonCardId;
+          if (state.expandedCertificationCards.has(cardId)) {
+            state.expandedCertificationCards.delete(cardId);
+          } else {
+            state.expandedCertificationCards.add(cardId);
+          }
+          renderCertifications();
+        });
+      });
+
+      certificationsBody.querySelectorAll("button[data-cert-revoke-card-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          revokeCertification(
+            button.dataset.certRevokeCardId,
+            button.dataset.certRevokeStationId,
+          );
+        });
+      });
+    }
+
+    function overrideDurationForRow(row) {
+      const select = row.querySelector("[data-override-duration]");
+      const custom = row.querySelector("[data-override-custom]");
+      if (select.value === "custom") {
+        return custom.value || "30";
+      }
+      return select.value;
+    }
+
+    function renderStationRules() {
+      if (!canManageStationRules()) {
+        stationRulesBody.innerHTML = "";
+        return;
+      }
+
+      stationRulesBody.innerHTML = state.stations.length
+        ? state.stations.map(station => `
+          <tr data-station-rule-row="${escapeHtml(station.station_id)}">
+            <td>${escapeHtml(station.station_name)}</td>
+            <td>
+              <div class="checkline">
+                <input type="checkbox" data-station-requires="${escapeHtml(station.station_id)}" ${station.requires_certification ? "checked" : ""}>
+                <label>Required</label>
+              </div>
+            </td>
+            <td>
+              <div class="rule-controls">
+                <div class="checkline">
+                  <input type="checkbox" data-station-override="${escapeHtml(station.station_id)}" ${station.cert_override_active ? "checked" : ""}>
+                  <label>Allow temporarily</label>
+                </div>
+                <select data-override-duration="${escapeHtml(station.station_id)}" aria-label="Override duration">
+                  <option value="30">30 min</option>
+                  <option value="60">1 hour</option>
+                  <option value="240">4 hours</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <input class="hidden" data-override-custom="${escapeHtml(station.station_id)}" type="number" min="1" max="1440" value="30" aria-label="Custom override minutes">
+              </div>
+            </td>
+            <td>${station.cert_override_active ? formatDateTime(station.cert_override_expires_at) : "--"}</td>
+            <td>${escapeHtml(station.cert_override_by || "--")}</td>
+          </tr>
+        `).join("")
+        : emptyRow(5, "No stations configured");
+
+      stationRulesBody.querySelectorAll("[data-override-duration]").forEach(select => {
+        select.addEventListener("change", () => {
+          const row = select.closest("tr");
+          const custom = row.querySelector("[data-override-custom]");
+          custom.classList.toggle("hidden", select.value !== "custom");
+        });
+      });
+
+      stationRulesBody.querySelectorAll("[data-station-requires]").forEach(input => {
+        input.addEventListener("change", () => {
+          saveStationRule(input.dataset.stationRequires, {
+            requires_certification: input.checked
+          });
+        });
+      });
+
+      stationRulesBody.querySelectorAll("[data-station-override]").forEach(input => {
+        input.addEventListener("change", () => {
+          const row = input.closest("tr");
+          const body = { cert_override_active: input.checked };
+          if (input.checked) {
+            body.cert_override_duration_minutes = overrideDurationForRow(row);
+          }
+          saveStationRule(input.dataset.stationOverride, body);
+        });
+      });
+    }
+
+    function renderCertifyPermissions() {
+      if (!canManageCertifyPermissions()) {
+        certifyPermissionsBody.innerHTML = "";
+        return;
+      }
+
+      const accounts = certifyPermissionAccounts();
+      const query = state.certifyPermissionFilter.trim().toLowerCase();
+      const matches = query
+        ? accounts.filter(card => (
+          cardRosterSearchText(card).includes(query)
+          || cardSearchLabel(card).toLowerCase() === query
+          || String(card.login_role || "").toLowerCase().includes(query)
+        ))
+        : [];
+
+      if (!accounts.length) {
+        certifyPermissionsBody.innerHTML = `<div class="permission-empty subtle">No active Staff or Volunteer logins</div>`;
+        return;
+      }
+
+      if (!query) {
+        certifyPermissionsBody.innerHTML = `<div class="permission-empty subtle">Search for a person to edit certify permissions</div>`;
+        return;
+      }
+
+      const visibleMatches = matches.slice(0, 8);
+      const moreMatches = matches.length - visibleMatches.length;
+
+      certifyPermissionsBody.innerHTML = visibleMatches.length
+        ? visibleMatches.map(card => {
+          const allowed = new Set(state.certifyPermissions
+            .filter(row => row.card_id === card.card_id)
+            .map(row => row.station_id));
+          const meta = [
+            card.student_id ? `Student ID ${card.student_id}` : "",
+            card.email
+          ].filter(Boolean).join(" | ");
+
+          return `
+            <div class="permission-card" data-certify-permission-card-id="${escapeHtml(card.card_id)}">
+              <div class="permission-person">
+                <strong>${escapeHtml(card.display_name || card.name || card.card_id)}</strong>
+                <div><span class="badge ${designationClass(card.login_role)}">${escapeHtml(card.login_role)}</span></div>
+                <small>${escapeHtml(meta || card.card_id)}</small>
+              </div>
+              <div class="permission-stations">
+                <div class="permission-stations-header">
+                  <span>Can certify for</span>
+                  <small>${allowed.size} selected</small>
+                </div>
+                <div class="permission-list">
+                  ${state.stations.map(station => `
+                    <label class="checkline">
+                      <input type="checkbox" value="${escapeHtml(station.station_id)}" ${allowed.has(station.station_id) ? "checked" : ""}>
+                      <span>${escapeHtml(station.station_name)}</span>
+                    </label>
+                  `).join("")}
+                </div>
+              </div>
+              <div class="permission-actions">
+                <button type="button" data-save-certify-permissions="${escapeHtml(card.card_id)}">Save</button>
+              </div>
+            </div>
+          `;
+        }).join("")
+        : `<div class="permission-empty subtle">No matching Staff or Volunteer login</div>`;
+
+      if (moreMatches > 0) {
+        certifyPermissionsBody.innerHTML += `<div class="permission-empty subtle">${moreMatches} more matches. Keep typing to narrow the list.</div>`;
+      }
+
+      certifyPermissionsBody.querySelectorAll("[data-save-certify-permissions]").forEach(button => {
+        button.addEventListener("click", () => {
+          saveCertifyPermissions(button.dataset.saveCertifyPermissions);
+        });
+      });
+    }
+
+    function dashboardRole(data) {
+      const role = data.dashboard_access || state.role || "public";
+      return role === "public" ? "" : role;
+    }
+
+    function updateDashboardVisibility(data) {
+      const role = dashboardRole(data);
+      const canViewPeople = ["admin", "staff", "volunteer"].includes(role);
+      const canViewFull = ["admin", "staff"].includes(role);
+      updateTabVisibility(role || "public");
+
+      warningsMetric.classList.toggle("hidden", !canViewFull);
+      peoplePanel.classList.toggle("hidden", !canViewPeople);
+      stationUsagePanel.classList.remove("hidden");
+      stationPeopleHeader.classList.toggle("hidden", !canViewFull);
+      activeSessionsPanel.classList.toggle("hidden", !canViewFull);
+      warningsPanel.classList.toggle("hidden", !canViewFull);
+      recentSwipesPanel.classList.toggle("hidden", !canViewFull);
+      downloadSwipesButton.classList.toggle("hidden", !canViewFull);
+      downloadAuditButton.classList.toggle("hidden", role !== "admin");
+    }
+
+    function renderDashboard(data) {
+      const stations = data.stations || [];
+      const activePeople = data.active_people || [];
+      const activeSessions = data.active_sessions || [];
+      const recentSwipes = data.recent_swipes || [];
+      const warnings = data.warnings || [];
+      const canViewStationPeople = ["admin", "staff"].includes(dashboardRole(data));
+      const activeStationCount = Number.isFinite(Number(data.active_station_count))
+        ? Number(data.active_station_count)
+        : stations.filter(station => station.active_sessions > 0).length;
+      const lastSwipeAt = data.last_swipe_at || (recentSwipes.length ? recentSwipes[0].timestamp : "");
+      const warningTotal = warnings.length;
+
+      totalActive.textContent = data.total_active;
+      activeStations.textContent = activeStationCount;
+      warningCount.textContent = warningTotal;
+      lastSwipe.textContent = lastSwipeAt
+        ? formatTime(lastSwipeAt)
+        : "--";
+      setConnectionStatus("Live", "ok", false, formatTime(data.server_time));
+      warningsMetric.classList.toggle("metric-alert", warningTotal > 0);
+      warningsPanel.classList.toggle("has-warnings", warningTotal > 0);
+      if (state.hasDashboardLoaded && warningTotal > state.lastWarningCount) {
+        warningsMetric.classList.remove("metric-pulse");
+        window.clearTimeout(state.warningPulseTimer);
+        window.requestAnimationFrame(() => warningsMetric.classList.add("metric-pulse"));
+        state.warningPulseTimer = window.setTimeout(() => {
+          warningsMetric.classList.remove("metric-pulse");
+        }, 2600);
+      }
+      state.lastWarningCount = warningTotal;
+      state.hasDashboardLoaded = true;
+      updateDashboardVisibility(data);
+
+      peopleBody.innerHTML = activePeople.length
+        ? activePeople.map(person => `
+          <tr>
+            <td>${personCell(person)}</td>
+            <td>${escapeHtml(person.entry_door_name)}</td>
+            <td>${formatDuration(person.elapsed_seconds)}</td>
+          </tr>
+        `).join("")
+        : emptyRow(3, "No one is currently counted inside");
+
+      stationsBody.innerHTML = stations.length
+        ? stations.map(station => `
+          <tr>
+            <td>${escapeHtml(station.station_name)}</td>
+            <td><span class="badge ${station.active_sessions ? "in" : "empty"}">${station.active_sessions}</span></td>
+            ${canViewStationPeople ? `<td>${escapeHtml(station.active_cards || "--")}</td>` : ""}
+          </tr>
+        `).join("")
+        : emptyRow(canViewStationPeople ? 3 : 2, "No stations configured");
+
+      sessionsBody.innerHTML = activeSessions.length
+        ? activeSessions.map(session => `
+          <tr>
+            <td>${personCell(session)}</td>
+            <td>${escapeHtml(session.station_name)}</td>
+            <td>${formatDuration(session.elapsed_seconds)}</td>
+          </tr>
+        `).join("")
+        : emptyRow(3, "No active station sessions");
+
+      warningsBody.innerHTML = warnings.length
+        ? warnings.map(warning => `
+          <tr class="${issueRowClass(warning)}">
+            <td>${formatTime(warning.timestamp)}</td>
+            <td>${personCell(warning)}</td>
+            <td>
+              <span class="badge ${warning.warning === "cert_granted_via_swipe" ? "in" : "warn"}">${escapeHtml(warningLabel(warning.warning))}</span>
+              ${warning.details ? " " + escapeHtml(warning.details) : ""}
+            </td>
+          </tr>
+        `).join("")
+        : emptyRow(3, "No mismatches");
+
+      swipesBody.innerHTML = recentSwipes.length
+        ? recentSwipes.map(swipe => `
+          <tr class="${issueRowClass(swipe)}">
+            <td>${formatTime(swipe.timestamp)}</td>
+            <td>${personCell(swipe)}</td>
+            <td>${escapeHtml(swipe.station_name)}</td>
+            <td><span class="badge ${actionClass(swipe.action, swipe.allowed)}">${escapeHtml(actionLabel(swipe.action))}</span></td>
+            <td>${formatDuration(swipe.duration_seconds)}</td>
+            <td>${escapeHtml(swipe.active_users)}</td>
+            <td>${swipe.warning ? `<span class="badge ${swipe.warning === "cert_granted_via_swipe" ? "in" : "warn"}">${escapeHtml(warningLabel(swipe.warning))}</span>` : "--"}</td>
+          </tr>
+        `).join("")
+        : emptyRow(7, "No swipes yet");
+    }
+
+    function renderAuditLog() {
+      auditPanel.classList.toggle("hidden", state.role !== "admin");
+
+      if (state.role !== "admin") {
+        auditBody.innerHTML = "";
+        return;
+      }
+
+      auditBody.innerHTML = state.auditLog.length
+        ? state.auditLog.map(entry => `
+          <tr>
+            <td>${formatDateTime(entry.timestamp)}</td>
+            <td>${auditActorCell(entry)}</td>
+            <td><span class="badge empty">${escapeHtml(auditActionLabel(entry.action))}</span></td>
+            <td>
+              <strong>${escapeHtml(entry.target_type || "--")}</strong>
+              <br>
+              <span class="subtle">${escapeHtml(entry.target_id || "--")}</span>
+            </td>
+            <td>${escapeHtml(auditDetailsText(entry.details))}</td>
+          </tr>
+        `).join("")
+        : emptyRow(5, "No audit entries yet");
+    }
+
+    function selectCertCard(card) {
+      state.selectedCertCardId = card.card_id;
+      certCardSearch.value = cardSearchLabel(card);
+      certCardResults.classList.add("hidden");
+      certCardResults.innerHTML = "";
+      state.certViewMode = "person";
+      state.selectedCertPersonFilterCardId = card.card_id;
+      state.certPersonFilter = cardSearchLabel(card);
+      certPersonFilter.value = state.certPersonFilter;
+      renderCertifications();
+    }
+
+    function renderPersonLookup(input, results, selectedCardId, onSelect, emptyText) {
+      const query = input.value;
+      const matches = certCardMatches(query);
+
+      if (!query.trim() || selectedCardId) {
+        results.classList.add("hidden");
+        results.innerHTML = "";
+        return;
+      }
+
+      results.classList.remove("hidden");
+      results.innerHTML = matches.length
+        ? matches.map(card => `
+          <button type="button" data-lookup-card-id="${escapeHtml(card.card_id)}">
+            <strong>${escapeHtml(card.display_name || card.name || card.card_id)}</strong>
+            <small>${escapeHtml([card.student_id || "No student ID", card.email].filter(Boolean).join(" | "))}</small>
+          </button>
+        `).join("")
+        : `<button type="button" disabled>${escapeHtml(emptyText)}</button>`;
+
+      results.querySelectorAll("button[data-lookup-card-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          const card = state.cards.find(item => item.card_id === button.dataset.lookupCardId);
+          if (card) onSelect(card);
+        });
+      });
+    }
+
+    function renderStationLookup(input, results, stations, selectedStationId, onSelect, emptyText) {
+      const query = input.value;
+      const matches = stationMatches(query, stations);
+
+      if (!query.trim() || selectedStationId) {
+        results.classList.add("hidden");
+        results.innerHTML = "";
+        return;
+      }
+
+      results.classList.remove("hidden");
+      results.innerHTML = matches.length
+        ? matches.map(station => `
+          <button type="button" data-lookup-station-id="${escapeHtml(station.station_id)}">
+            <strong>${escapeHtml(station.station_name)}</strong>
+            <small>${escapeHtml(station.station_id)}</small>
+          </button>
+        `).join("")
+        : `<button type="button" disabled>${escapeHtml(emptyText)}</button>`;
+
+      results.querySelectorAll("button[data-lookup-station-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          const station = stations.find(item => item.station_id === button.dataset.lookupStationId);
+          if (station) onSelect(station);
+        });
+      });
+    }
+
+    function renderCertCardLookup() {
+      renderPersonLookup(
+        certCardSearch,
+        certCardResults,
+        state.selectedCertCardId,
+        selectCertCard,
+        "No matching people"
+      );
+    }
+
+    function selectCertPersonFilterCard(card) {
+      state.selectedCertPersonFilterCardId = card.card_id;
+      state.certPersonFilter = cardSearchLabel(card);
+      certPersonFilter.value = state.certPersonFilter;
+      certPersonResults.classList.add("hidden");
+      certPersonResults.innerHTML = "";
+      renderCertifications();
+    }
+
+    function renderCertPersonFilterLookup() {
+      renderPersonLookup(
+        certPersonFilter,
+        certPersonResults,
+        state.selectedCertPersonFilterCardId,
+        selectCertPersonFilterCard,
+        "No matching people"
+      );
+    }
+
+    function selectCertStation(station) {
+      state.selectedCertStationId = station.station_id;
+      certStationSearch.value = stationSearchLabel(station);
+      certStationResults.classList.add("hidden");
+      certStationResults.innerHTML = "";
+    }
+
+    function renderCertStationLookup() {
+      renderStationLookup(
+        certStationSearch,
+        certStationResults,
+        certFormStations(),
+        state.selectedCertStationId,
+        selectCertStation,
+        "No matching stations"
+      );
+    }
+
+    function selectCertStationFilter(station) {
+      state.selectedCertStationFilterStationId = station.station_id;
+      state.certStationFilter = stationSearchLabel(station);
+      certStationFilter.value = state.certStationFilter;
+      certStationFilterResults.classList.add("hidden");
+      certStationFilterResults.innerHTML = "";
+      renderCertifications();
+    }
+
+    function renderCertStationFilterLookup() {
+      renderStationLookup(
+        certStationFilter,
+        certStationFilterResults,
+        state.stations,
+        state.selectedCertStationFilterStationId,
+        selectCertStationFilter,
+        "No matching stations"
+      );
+    }
+
+    function renderAdmin() {
+      updateAccessUi();
+      renderPendingCards();
+
+      const query = state.cardFilter.trim().toLowerCase();
+      const filteredCards = query
+        ? state.cards.filter(card => cardRosterSearchText(card).includes(query))
+        : state.cards;
+
+      cardsBody.innerHTML = filteredCards.length
+        ? filteredCards.map(card => `
+          <tr data-card-id="${escapeHtml(card.card_id)}">
+            <td>${personCell(card)}</td>
+            <td>${escapeHtml(card.card_id)}</td>
+            <td>${escapeHtml(card.email || "--")}</td>
+            <td>${escapeHtml(card.student_id || "--")}</td>
+          </tr>
+        `).join("")
+        : emptyRow(4, state.cards.length ? "No matching cards" : "No cards saved");
+
+      renderCertifications();
+      renderStationRules();
+      renderCertifyPermissions();
+      renderAuditLog();
+      renderCertCardLookup();
+      renderCertPersonFilterLookup();
+      renderCertStationLookup();
+      renderCertStationFilterLookup();
+
+      cardsBody.querySelectorAll("tr[data-card-id]").forEach(row => {
+        row.addEventListener("click", () => {
+          const card = state.cards.find(item => item.card_id === row.dataset.cardId);
+          if (!card) return;
+          state.selectedCardId = card.card_id;
+          document.getElementById("card-id").value = card.card_id;
+          document.getElementById("card-id").readOnly = false;
+          document.getElementById("card-name").value = card.name;
+          document.getElementById("card-email").value = card.email;
+          document.getElementById("card-student-id").value = card.student_id || "";
+          document.getElementById("card-designation").value = card.designation || "User";
+          document.getElementById("card-notes").value = card.notes || "";
+          document.getElementById("card-active").checked = card.active;
+          if (canManageAccounts()) {
+            document.getElementById("login-role").value = (card.login_role || "").toLowerCase();
+            document.getElementById("login-password").value = "";
+            document.getElementById("login-active").checked = card.has_login ? card.login_active : true;
+          }
+          updateDeleteCardUi();
+        });
+      });
+    }
+
+    function renderPendingCards() {
+      const canEnroll = canEditCards();
+      const count = canEnroll ? state.pendingCards.length : 0;
+
+      pendingCardCount.textContent = count;
+      pendingCardCount.classList.toggle("hidden", count === 0);
+
+      if (!canEnroll) {
+        pendingCardsBody.innerHTML = `<div class="pending-empty subtle">Unlock card database access to see pending cards</div>`;
+        return;
+      }
+
+      pendingCardsBody.innerHTML = state.pendingCards.length
+        ? state.pendingCards.map(card => `
+          <div class="pending-row">
+            <div>
+              <small>Card ID</small>
+              <strong>${escapeHtml(card.card_id)}</strong>
+            </div>
+            <div>
+              <small>Last seen</small>
+              <span>${formatDateTime(card.last_seen_at)} at ${escapeHtml(card.last_seen_station || "--")}</span>
+            </div>
+            <button type="button" data-enroll-card-id="${escapeHtml(card.card_id)}">Enroll</button>
+          </div>
+        `).join("")
+        : `<div class="pending-empty subtle">No pending cards</div>`;
+
+      pendingCardsBody.querySelectorAll("button[data-enroll-card-id]").forEach(button => {
+        button.addEventListener("click", () => enrollPendingCard(button.dataset.enrollCardId));
+      });
+    }
+
+    function resetCardForm() {
+      state.selectedCardId = "";
+      document.getElementById("card-form").reset();
+      document.getElementById("card-id").readOnly = false;
+      document.getElementById("card-designation").value = "User";
+      document.getElementById("card-active").checked = true;
+      if (canManageAccounts()) {
+        document.getElementById("login-role").value = "";
+        document.getElementById("login-password").value = "";
+        document.getElementById("login-active").checked = true;
+      }
+      document.getElementById("card-status").textContent = "";
+      updateDeleteCardUi();
+    }
+
+    function enrollPendingCard(cardId) {
+      resetCardForm();
+      state.selectedCardId = "";
+      document.getElementById("card-id").value = cardId;
+      document.getElementById("card-id").readOnly = true;
+      document.getElementById("card-name").focus();
+      document.getElementById("card-status").textContent = "Pending card selected";
+      updateDeleteCardUi();
+    }
+
+    async function revokeCertification(cardId, stationId) {
+      const status = document.getElementById("cert-status");
+      const cert = state.certifications.find(item => (
+        item.card_id === cardId && item.station_id === stationId
+      ));
+
+      status.textContent = "Revoking...";
+      try {
+        if (!canCertifyStation(stationId)) {
+          throw new Error("You are not authorized to manage certifications for this station");
+        }
+        await postJson("/api/certifications", {
+          card_id: cardId,
+          station_id: stationId,
+          active: false,
+          notes: cert ? cert.notes : ""
+        });
+        status.textContent = "Revoked";
+        await refreshAdmin();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+
+    async function saveStationRule(stationId, patch) {
+      const status = document.getElementById("cert-status");
+      status.textContent = "Saving station rule...";
+      try {
+        if (!canManageStationRules()) throw new Error("Staff or admin login required");
+        await postJson("/api/stations", { station_id: stationId, ...patch });
+        status.textContent = "Station rule saved";
+        await refreshAdmin();
+      } catch (error) {
+        status.textContent = error.message;
+        await refreshAdmin();
+      }
+    }
+
+    async function saveCertifyPermissions(cardId) {
+      const status = document.getElementById("cert-status");
+      const row = Array.from(
+        certifyPermissionsBody.querySelectorAll("[data-certify-permission-card-id]")
+      ).find(item => item.dataset.certifyPermissionCardId === cardId);
+
+      if (!row) return;
+
+      const stationIds = Array.from(row.querySelectorAll("input[type='checkbox']:checked"))
+        .map(input => input.value);
+
+      status.textContent = "Saving certify permissions...";
+      try {
+        if (!canManageCertifyPermissions()) throw new Error("Admin login required");
+        const data = await postJson("/api/certify-permissions", {
+          card_id: cardId,
+          station_ids: stationIds
+        });
+        state.certifyPermissions = data.certify_permissions || [];
+        status.textContent = "Certify permissions saved";
+        await refreshAdmin();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+
+    async function deleteSelectedCard() {
+      const status = document.getElementById("card-status");
+      const cardId = state.selectedCardId;
+      const card = state.cards.find(item => item.card_id === cardId);
+      const label = card ? (card.display_name || card.name || card.card_id) : cardId;
+
+      if (!canManageAccounts()) {
+        status.textContent = "Admin login required to delete cards";
+        return;
+      }
+
+      if (!cardId) {
+        status.textContent = "Select an existing card first";
+        return;
+      }
+
+      const confirmed = await showConfirmDialog({
+        title: `Delete ${label}?`,
+        message: "This removes the card record, dashboard login, active sessions, certifications, and certify permissions. Swipe history stays saved.",
+        confirmText: "Delete Card",
+        danger: true
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
+      status.textContent = "Deleting...";
+
+      try {
+        const response = await fetch(`/api/cards/${encodeURIComponent(cardId)}`, {
+          method: "DELETE",
+          headers: authHeaders()
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error || "Delete failed");
+        }
+
+        state.cards = data.cards || state.cards;
+        state.certifications = data.certifications || state.certifications;
+        state.certifyPermissions = data.certify_permissions || state.certifyPermissions;
+        state.auditLog = data.audit_log || state.auditLog;
+
+        resetCardForm();
+        status.textContent = "Deleted";
+        await refreshAdmin();
+        await refreshPendingCards();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+
+    async function refreshDashboard() {
+      if (state.dashboardRequestInFlight) return;
+      state.dashboardRequestInFlight = true;
+
+      try {
+        const response = await fetch("/api/dashboard?limit=20", {
+          cache: "no-store",
+          headers: authHeaders()
+        });
+
+        if (response.status === 401 || response.status === 403) {
+          sessionExpired("Session expired - log in again");
+          return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          const message = response.status >= 500
+            ? `Server error ${response.status}`
+            : data.error || `HTTP ${response.status}`;
+          throw new Error(message);
+        }
+
+        state.lastDashboardSuccessAt = new Date().toISOString();
+        state.lastDashboardData = data;
+        renderDashboard(data);
+      } catch (error) {
+        const detail = state.lastDashboardSuccessAt
+          ? `Last live ${formatTime(state.lastDashboardSuccessAt)}`
+          : "";
+        setConnectionStatus(
+          error.message && !String(error.message).startsWith("Failed to fetch")
+            ? `${error.message} - retrying`
+            : "Offline - retrying",
+          "error",
+          true,
+          detail
+        );
+      } finally {
+        state.dashboardRequestInFlight = false;
+      }
+    }
+
+    async function refreshPendingCards() {
+      if (state.pendingCardsRequestInFlight) return;
+
+      if (!canEditCards()) {
+        state.pendingCards = [];
+        renderPendingCards();
+        return;
+      }
+
+      state.pendingCardsRequestInFlight = true;
+      try {
+        const response = await fetch("/api/pending-cards", {
+          cache: "no-store",
+          headers: authHeaders()
+        });
+        if (response.status === 401 || response.status === 403) {
+          sessionExpired("Session expired - log in again");
+          return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        state.pendingCards = data.pending_cards || [];
+        renderPendingCards();
+      } catch (_error) {
+        pendingCardsBody.innerHTML = `<div class="pending-empty subtle">Pending cards unavailable - retrying</div>`;
+      } finally {
+        state.pendingCardsRequestInFlight = false;
+      }
+    }
+
+    async function refreshAdmin() {
+      if (!state.role) {
+        renderAdmin();
+        return;
+      }
+
+      const response = await fetch("/api/admin", {
+        cache: "no-store",
+        headers: authHeaders()
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setAccess({});
+        renderAdmin();
+        accessStatus.textContent = data.error || "Access locked";
+        return;
+      }
+
+      state.role = data.role || state.role;
+      state.cards = data.cards || [];
+      state.stations = data.stations || [];
+      state.certifications = data.certifications || [];
+      state.certifyPermissions = data.certify_permissions || [];
+      state.auditLog = data.audit_log || [];
+      state.canCertifyStationIds = data.can_certify_station_ids || [];
+      renderAdmin();
+      await refreshPendingCards();
+    }
+
+    async function checkAccess(login, password, quiet = false) {
+      login = String(login || "").trim();
+      password = String(password || "");
+      if (!login || !password) {
+        if (!quiet) accessStatus.textContent = "Enter login and password";
+        return false;
+      }
+
+      try {
+        const response = await fetch("/api/access", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ login, password })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error || "Login not recognized");
+        }
+
+        setAccess(data);
+        await refreshAdmin();
+        await refreshDashboard();
+        return true;
+      } catch (error) {
+        localStorage.removeItem("stationAccessToken");
+        localStorage.removeItem("stationAccessRole");
+        localStorage.removeItem("stationAccessName");
+        state.role = "";
+        state.token = "";
+        state.userName = "";
+        updateAccessUi();
+        renderAdmin();
+        if (!quiet) accessStatus.textContent = error.message;
+        return false;
+      }
+    }
+
+    async function postJson(url, body) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.error || "Save failed");
+      return data;
+    }
+
+    function downloadCsv(path) {
+      if (!state.token) return;
+      const link = document.createElement("a");
+      link.href = `${path}?access_token=${encodeURIComponent(state.token)}`;
+      link.download = "";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+
+    function scheduleDashboardPoll(immediate = false) {
+      window.clearTimeout(dashboardPollId);
+      const delay = document.hidden ? HIDDEN_DASHBOARD_POLL_MS : DASHBOARD_POLL_MS;
+      dashboardPollId = window.setTimeout(async () => {
+        await refreshDashboard();
+        scheduleDashboardPoll();
+      }, immediate ? 0 : delay);
+    }
+
+    function schedulePendingCardsPoll(immediate = false) {
+      window.clearTimeout(pendingCardsPollId);
+      const delay = document.hidden ? HIDDEN_PENDING_CARDS_POLL_MS : PENDING_CARDS_POLL_MS;
+      pendingCardsPollId = window.setTimeout(async () => {
+        await refreshPendingCards();
+        schedulePendingCardsPoll();
+      }, immediate ? 0 : delay);
+    }
+
+    const renderCardFilterDebounced = debounce(() => {
+      state.cardFilter = cardFilter.value;
+      renderAdmin();
+    });
+
+    const renderCertPersonFilterDebounced = debounce(() => {
+      state.certPersonFilter = certPersonFilter.value;
+      renderCertifications();
+      renderCertPersonFilterLookup();
+    });
+
+    const renderCertStationFilterDebounced = debounce(() => {
+      state.certStationFilter = certStationFilter.value;
+      renderCertifications();
+      renderCertStationFilterLookup();
+    });
+
+    const renderCertifyPermissionFilterDebounced = debounce(() => {
+      state.certifyPermissionFilter = certifyPermissionFilter.value;
+      renderAdmin();
+    });
+
+    const renderCertCardLookupDebounced = debounce(() => {
+      renderCertCardLookup();
+    });
+
+    const renderCertStationLookupDebounced = debounce(() => {
+      renderCertStationLookup();
+    });
+
+    document.querySelectorAll(".tab-button").forEach(button => {
+      button.addEventListener("click", () => {
+        activateTab(button.dataset.tab);
+      });
+    });
+
+    accessLogin.addEventListener("click", () => {
+      checkAccess(accessLoginId.value, accessPassword.value);
+    });
+
+    accessLoginId.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        checkAccess(accessLoginId.value, accessPassword.value);
+      }
+    });
+
+    accessPassword.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        checkAccess(accessLoginId.value, accessPassword.value);
+      }
+    });
+
+    accessLogout.addEventListener("click", () => {
+      fetch("/api/logout", { method: "POST", headers: authHeaders() }).catch(() => {});
+      setAccess({});
+      accessLoginId.value = "";
+      accessPassword.value = "";
+      renderAdmin();
+      refreshDashboard();
+    });
+
+    cardFilter.addEventListener("input", () => {
+      renderCardFilterDebounced();
+    });
+
+    document.querySelectorAll("[data-cert-view]").forEach(button => {
+      button.addEventListener("click", () => {
+        state.certViewMode = button.dataset.certView;
+        renderAdmin();
+      });
+    });
+
+    certPersonFilter.addEventListener("input", () => {
+      state.selectedCertPersonFilterCardId = "";
+      renderCertPersonFilterDebounced();
+    });
+
+    certPersonFilter.addEventListener("focus", () => {
+      renderCertPersonFilterLookup();
+    });
+
+    certStationFilter.addEventListener("input", () => {
+      state.selectedCertStationFilterStationId = "";
+      renderCertStationFilterDebounced();
+    });
+
+    certStationFilter.addEventListener("focus", () => {
+      renderCertStationFilterLookup();
+    });
+
+    certifyPermissionFilter.addEventListener("input", () => {
+      renderCertifyPermissionFilterDebounced();
+    });
+
+    certCardSearch.addEventListener("input", () => {
+      state.selectedCertCardId = "";
+      renderCertCardLookupDebounced();
+    });
+
+    certCardSearch.addEventListener("focus", () => {
+      renderCertCardLookup();
+    });
+
+    certStationSearch.addEventListener("input", () => {
+      state.selectedCertStationId = "";
+      renderCertStationLookupDebounced();
+    });
+
+    certStationSearch.addEventListener("focus", () => {
+      renderCertStationLookup();
+    });
+
+    document.addEventListener("click", event => {
+      if (!event.target.closest(".lookup-wrap")) {
+        certCardResults.classList.add("hidden");
+        certPersonResults.classList.add("hidden");
+        certStationResults.classList.add("hidden");
+        certStationFilterResults.classList.add("hidden");
+      }
+    });
+
+    confirmCancel.addEventListener("click", () => {
+      closeConfirmDialog(false);
+    });
+
+    confirmAccept.addEventListener("click", () => {
+      closeConfirmDialog(true);
+    });
+
+    confirmModal.addEventListener("click", event => {
+      if (event.target === confirmModal) {
+        closeConfirmDialog(false);
+      }
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !confirmModal.classList.contains("hidden")) {
+        closeConfirmDialog(false);
+      }
+    });
+
+    downloadSwipesButton.addEventListener("click", () => {
+      downloadCsv("/swipes.csv");
+    });
+
+    downloadAuditButton.addEventListener("click", () => {
+      downloadCsv("/audit.csv");
+    });
+
+    document.getElementById("card-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const status = document.getElementById("card-status");
+      status.textContent = "Saving...";
+      try {
+        if (!canEditCards()) throw new Error("Authorized login required");
+        const cardBody = {
+          card_id: document.getElementById("card-id").value,
+          name: document.getElementById("card-name").value,
+          email: document.getElementById("card-email").value,
+          student_id: document.getElementById("card-student-id").value,
+          designation: document.getElementById("card-designation").value,
+          active: document.getElementById("card-active").checked,
+          notes: document.getElementById("card-notes").value
+        };
+        if (canManageAccounts()) {
+          cardBody.login_role = document.getElementById("login-role").value;
+          cardBody.login_password = document.getElementById("login-password").value;
+          cardBody.login_active = document.getElementById("login-active").checked;
+        }
+        await postJson("/api/cards", cardBody);
+        state.selectedCardId = String(cardBody.card_id || "").trim();
+        status.textContent = "Saved";
+        document.getElementById("card-id").readOnly = false;
+        updateDeleteCardUi();
+        await refreshAdmin();
+        await refreshPendingCards();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    });
+
+    document.getElementById("clear-card").addEventListener("click", () => {
+      resetCardForm();
+    });
+
+    deleteCardButton.addEventListener("click", () => {
+      deleteSelectedCard();
+    });
+
+    document.getElementById("card-id").addEventListener("input", () => {
+      state.selectedCardId = "";
+      updateDeleteCardUi();
+    });
+
+    document.getElementById("cert-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const status = document.getElementById("cert-status");
+      status.textContent = "Saving...";
+      try {
+        if (!canSubmitCertifications()) {
+          throw new Error("You are not authorized to certify any stations");
+        }
+
+        const card = state.cards.find(item => item.card_id === state.selectedCertCardId)
+          || findCardFromSearch(document.getElementById("cert-card-search").value);
+        const station = certFormStations().find(item => item.station_id === state.selectedCertStationId)
+          || findStationFromSearch(document.getElementById("cert-station-search").value);
+
+        if (!card) throw new Error("Choose a person from the search results");
+        if (!station) throw new Error("Choose a station from the search results");
+        if (!canCertifyStation(station.station_id)) {
+          throw new Error("You are not authorized to certify users for this station");
+        }
+
+        await postJson("/api/certifications", {
+          card_id: card.card_id,
+          station_id: station.station_id,
+          active: document.getElementById("cert-active").checked,
+          notes: document.getElementById("cert-notes").value
+        });
+        status.textContent = "Saved. Choose another station for the same person.";
+        state.selectedCertCardId = card.card_id;
+        document.getElementById("cert-card-search").value = cardSearchLabel(card);
+        certCardResults.classList.add("hidden");
+        certCardResults.innerHTML = "";
+        state.certViewMode = "person";
+        state.selectedCertPersonFilterCardId = card.card_id;
+        state.certPersonFilter = cardSearchLabel(card);
+        certPersonFilter.value = state.certPersonFilter;
+        state.selectedCertStationId = "";
+        document.getElementById("cert-station-search").value = "";
+        certStationResults.classList.add("hidden");
+        certStationResults.innerHTML = "";
+        document.getElementById("cert-notes").value = "";
+        document.getElementById("cert-active").checked = true;
+        await refreshAdmin();
+        document.getElementById("cert-station-search").focus();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    });
+
+    renderInitialLoadingState();
+
+    if (state.token && state.role) {
+      updateAccessUi();
+      refreshAdmin();
+    } else {
+      updateAccessUi();
+      renderAdmin();
+    }
+
+    scheduleDashboardPoll(true);
+    schedulePendingCardsPoll(true);
+
+    document.addEventListener("visibilitychange", () => {
+      scheduleDashboardPoll(true);
+      schedulePendingCardsPoll(true);
+    });
+  </script>
+</body>
+</html>

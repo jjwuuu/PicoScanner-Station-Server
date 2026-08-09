@@ -1,0 +1,49 @@
+{
+  "stations": [
+    {
+      "id": "front-door",
+      "name": "Front Door",
+      "kind": "door"
+    },
+    {
+      "id": "back-door",
+      "name": "Back Door",
+      "kind": "door"
+    },
+    {
+      "id": "3d-printing",
+      "name": "3D Printing Station",
+      "kind": "station"
+    },
+    {
+      "id": "soldering",
+      "name": "Soldering Station",
+      "kind": "station"
+    },
+    {
+      "id": "embroidery",
+      "name": "Embroidery Station",
+      "kind": "station"
+    },
+    {
+      "id": "sewing",
+      "name": "Sewing Station",
+      "kind": "station"
+    },
+    {
+      "id": "laser-cutting",
+      "name": "Laser Cutting",
+      "kind": "station"
+    },
+    {
+      "id": "buttons-stickers",
+      "name": "Buttons/Stickers",
+      "kind": "station"
+    },
+    {
+      "id": "vinyl",
+      "name": "Vinyl",
+      "kind": "station"
+    }
+  ]
+}

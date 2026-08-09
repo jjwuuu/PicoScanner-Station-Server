@@ -1,0 +1,15 @@
+[Unit]
+Description=RFID Station Swipe Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/jwuu/station-server
+Environment=STATION_API_KEY=change-this-shared-station-key
+ExecStart=/home/jwuu/station-server/venv/bin/python /home/jwuu/station-server/app.py
+Restart=always
+RestartSec=5
+User=jwuu
+
+[Install]
+WantedBy=multi-user.target
