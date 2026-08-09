@@ -1203,6 +1203,9 @@ def dashboard():
 @app.get("/api/dashboard")
 def dashboard_data():
     limit = request.args.get("limit", "20")
+    swipe_query = request.args.get("swipe_query", "").strip()
+    swipe_station = request.args.get("swipe_station", "").strip()
+    swipe_warning_only = request.args.get("swipe_warning_only", "") == "1"
     account = account_for_token(token_from_request())
     role = normalize_access_role(account["role"]) if account else ""
     can_view_people = role in ("admin", "staff", "volunteer")
@@ -1233,7 +1236,7 @@ def dashboard_data():
         ]
         active_sessions = active_session_rows(conn) if can_view_full_dashboard else []
         recent_swipes = (
-            recent_swipe_rows(conn, limit)
+            recent_swipe_rows(conn, limit, swipe_query, swipe_station, swipe_warning_only)
             if can_view_full_dashboard
             else []
         )
@@ -2262,9 +2265,21 @@ def active_session_rows(conn):
     return result
 
 
-def recent_swipe_rows(conn, limit):
+def recent_swipe_rows(conn, limit, query="", station_id="", warning_only=False):
+    clauses = []
+    params = []
+    if query:
+        like = f"%{query.lower()}%"
+        clauses.append("(lower(cards.name) LIKE ? OR lower(cards.email) LIKE ? OR lower(swipe_events.card_id) LIKE ? OR lower(swipe_events.action) LIKE ?)")
+        params.extend([like, like, like, like])
+    if station_id:
+        clauses.append("swipe_events.station_id = ?")
+        params.append(station_id)
+    if warning_only:
+        clauses.append("swipe_events.warning != ''")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT
             swipe_events.card_id,
             cards.name,
@@ -2282,10 +2297,11 @@ def recent_swipe_rows(conn, limit):
             swipe_events.details
         FROM swipe_events
         LEFT JOIN cards ON cards.card_id = swipe_events.card_id
+        {where}
         ORDER BY id DESC
         LIMIT ?
         """,
-        (limit,),
+        (*params, limit),
     ).fetchall()
 
     return [
@@ -2317,7 +2333,7 @@ def warning_rows(conn, limit):
             swipe_events.details
         FROM swipe_events
         LEFT JOIN cards ON cards.card_id = swipe_events.card_id
-        WHERE warning != ''
+        WHERE warning != '' AND swipe_events.action != 'station_auto_out'
         ORDER BY id DESC
         LIMIT ?
         """,

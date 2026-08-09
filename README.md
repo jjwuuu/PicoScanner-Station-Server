@@ -1,291 +1,99 @@
-# Pi Station Server
+# PicoScanner Station Server
 
-This is the local swipe server for the Raspberry Pi Zero W.
+PicoScanner is an RFID check-in system for makerspaces and similar shared spaces. Raspberry Pi Pico W readers send card swipes to a Raspberry Pi 3 server, which provides a live dashboard, card database, certifications, station rules, and CSV exports.
 
-It separates doors from shop stations:
+## What it does
 
-```text
-Door swipe    -> enter or exit the building
-Station swipe -> start or end station usage
-```
+- Tracks entry and exit through doors.
+- Tracks active use of equipment stations without changing the building count.
+- Requires active card records and station certifications where configured.
+- Automatically closes a station session when a person exits the building.
+- Records swipe history and administrative actions for reporting.
 
-Doors count people inside. Stations do not add to the building count.
-
-## Current Places
-
-Doors:
+## Project layout
 
 ```text
-front-door
-back-door
+Code/
+  Pi 3/       Flask server, dashboard, configuration, and test-data sender
+  Pico W/     MicroPython reader firmware and RFID helpers
 ```
 
-Stations:
-
-```text
-3d-printing
-soldering
-embroidery
-sewing
-laser-cutting
-buttons-stickers
-vinyl
-```
-
-## Mismatch Handling
-
-The server avoids double-counting cards:
-
-```text
-Same card enters through a door once -> counted as 1 person inside
-Same card exits through either door -> removed from people inside
-Station swipe does not change people-inside count
-```
-
-If someone leaves through a door while still checked into a station, the server:
-
-```text
-flags the card on the dashboard
-auto-closes the open station session
-logs a station_auto_out event
-```
-
-If someone swipes into a second station without swiping out of the first one, the server:
-
-```text
-auto-closes the old station session
-starts the new station session
-shows a moved_station_without_swipe_out warning
-```
-
-## Data Flow
-
-```text
-Pico W scanner -> hotspot Wi-Fi -> Pi Zero W server -> dashboard and Excel
-```
-
-## Run On The Pi
+## Server setup (Raspberry Pi 3)
 
 ```bash
-cd ~/station-server
+cd "Code/Pi 3"
+python -m venv venv
 source venv/bin/activate
-python app.py
+pip install -r requirements.txt
 ```
 
-Open the dashboard:
-
-```text
-http://server.local:5000/dashboard
-```
-
-or:
-
-```text
-http://192.168.1.41:5000/dashboard
-```
-
-The page has three tabs:
-
-```text
-Dashboard       live people/station status, showing names when cards are known
-Certifications  assign a card/person to stations
-Card Database   add or edit card ID, name, email, and designation
-```
-
-## Dashboard Access
-
-The dashboard can always show live status, but editing is password locked:
-
-```text
-Staff password      edit certifications and card database
-Volunteer password  add or edit card database only
-```
-
-For quick testing, the defaults are:
-
-```text
-staff
-volunteer
-```
-
-Change them before using this over Tailscale or any shared network:
+Set secure credentials before starting the server:
 
 ```bash
-export STATION_STAFF_PASSWORD='your-staff-password'
-export STATION_VOLUNTEER_PASSWORD='your-volunteer-password'
+export STATION_API_KEY='replace-with-one-shared-reader-key'
+export STATION_BOOTSTRAP_ADMIN_CARD_ID='your-admin-card-id'
+export STATION_BOOTSTRAP_ADMIN_PASSWORD='choose-a-strong-password'
 python app.py
 ```
 
-If using systemd, add these under `[Service]` in `station-server.service`:
+Open the dashboard at `http://<pi-address>:5000/dashboard`.
 
-```ini
-Environment=STATION_STAFF_PASSWORD=your-staff-password
-Environment=STATION_VOLUNTEER_PASSWORD=your-volunteer-password
-```
+The default station configuration is in [`Code/Pi 3/config.json`](Code/Pi%203/config.json). Edit it to add, rename, or remove doors and stations before deployment.
 
-Card designations are:
+## Dashboard roles
 
-```text
-Staff
-Volunteer
-User
-```
+| Role | Capabilities |
+| --- | --- |
+| Admin | Manages dashboard accounts, station rules, certification permissions, cards, certifications, swipe history, and audit history. |
+| Staff | Manages station rules, cards, certifications, and swipe history. |
+| Volunteer | Manages cards and assigned certifications. |
+| Public | Views high-level live occupancy and station activity only. |
 
-## Pico W Request
+## Pico W reader setup
 
-Each Pico should send its place as variables.
-The server requires a shared station API key on every swipe request.
+Use the reader firmware in `Code/Pico W` as a starting point:
 
-On the Pi:
+- `door_pico.py` is for entry/exit readers.
+- `soldering_station_pico.py` is an equipment-station example.
 
-```bash
-export STATION_API_KEY='change-this-shared-station-key'
-python app.py
-```
-
-If using systemd, add this under `[Service]` in `station-server.service`:
-
-```ini
-Environment=STATION_API_KEY=change-this-shared-station-key
-```
-
-Each Pico firmware file must use the same value:
+Update these values in each firmware file before copying it to a Pico W:
 
 ```python
-STATION_API_KEY = "change-this-shared-station-key"
-```
-
-Soldering station example:
-
-```python
+SERVER_URL = "http://<pi-address>:5000/swipe"
+STATION_API_KEY = "replace-with-one-shared-reader-key"
 STATION_ID = "soldering"
 STATION_NAME = "Soldering Station"
-STATION_KIND = "station"
+STATION_KIND = "station"  # use "door" for doors
 ```
 
-Front door example:
+Every reader must use the same `STATION_API_KEY` configured on the server. Each station ID must match an entry in `config.json`.
 
-```python
-STATION_ID = "front-door"
-STATION_NAME = "Front Door"
-STATION_KIND = "door"
-```
+## Data and exports
 
-Request body:
+The server stores its SQLite database beside `app.py`. The dashboard can export CSV data for reporting:
 
-```json
-{
-  "card_id": "209451056",
-  "station_id": "soldering",
-  "station_name": "Soldering Station",
-  "station_kind": "station"
-}
-```
+- `/swipes.csv` — swipe history
+- `/active.csv` — people currently inside
+- `/station_status.csv` — current station use
+- `/audit.csv` — administrative audit history
 
-Door response example:
+Exports that contain protected information require an authorized dashboard session.
 
-```json
-{
-  "card_id": "209451056",
-  "station_id": "front-door",
-  "station_name": "Front Door",
-  "station_kind": "door",
-  "action": "enter",
-  "duration_seconds": null,
-  "active_users": 1,
-  "warning": "",
-  "details": ""
-}
-```
+## Test data
 
-Station response example:
-
-```json
-{
-  "card_id": "209451056",
-  "station_id": "soldering",
-  "station_name": "Soldering Station",
-  "station_kind": "station",
-  "action": "station_in",
-  "duration_seconds": null,
-  "active_users": 1,
-  "warning": "",
-  "details": ""
-}
-```
-
-## Test Data
-
-With the server running, open a second SSH session:
+With the server running:
 
 ```bash
-cd ~/station-server
+cd "Code/Pi 3"
 source venv/bin/activate
 python send_test_data.py http://127.0.0.1:5000
 ```
 
-The test data includes a mismatch where a card exits through a door while still checked into soldering.
+This sends sample door and station activity, including a mismatch scenario for validating incident handling.
 
-## Excel Power Query
+## Production notes
 
-Excel is for history/reporting. The dashboard is for live status.
-
-In Excel:
-
-```text
-Data -> Get Data -> From Web
-```
-
-Swipe history:
-
-```text
-http://server.local:5000/swipes.csv
-```
-
-People currently inside:
-
-```text
-http://server.local:5000/active.csv
-```
-
-Station status:
-
-```text
-http://server.local:5000/station_status.csv
-```
-
-`/swipes.csv` columns:
-
-```text
-card_id
-station_id
-station_name
-station_kind
-timestamp
-action
-duration_seconds
-active_users
-warning
-details
-```
-
-## Auto-Start On Boot
-
-After the server works manually:
-
-```bash
-sudo cp station-server.service /etc/systemd/system/station-server.service
-sudo systemctl daemon-reload
-sudo systemctl enable station-server
-sudo systemctl start station-server
-sudo systemctl status station-server
-```
-
-## Reset Test Data
-
-Stop the server, delete the database, and start it again:
-
-```bash
-rm simple_station_swipes.db
-python app.py
-```
+- Use a strong, unique API key and administrator password.
+- Keep the Pi server on a trusted network.
+- Configure the supplied `station-server.service` file if the server should start automatically after boot.
+- Back up the SQLite database before upgrades or schema changes.
