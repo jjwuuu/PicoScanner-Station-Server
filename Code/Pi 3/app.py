@@ -216,6 +216,7 @@ def init_db():
                 active_users INTEGER NOT NULL,
                 warning TEXT NOT NULL DEFAULT '',
                 details TEXT NOT NULL DEFAULT ''
+                ,event_id TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -237,6 +238,8 @@ def init_db():
         ensure_column(conn, "swipe_events", "allowed", "INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "swipe_events", "warning", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "swipe_events", "details", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "swipe_events", "event_id", "TEXT NOT NULL DEFAULT ''")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_swipe_events_event_id ON swipe_events(event_id) WHERE event_id != ''")
         ensure_column(conn, "cards", "student_id", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "cards", "designation", "TEXT NOT NULL DEFAULT 'User'")
         ensure_column(
@@ -1153,6 +1156,7 @@ def swipe():
     station_id = str(data.get("station_id", "")).strip()
     station_name = str(data.get("station_name", "")).strip()
     station_kind = str(data.get("station_kind", data.get("kind", ""))).strip()
+    event_id = str(data.get("event_id", "")).strip()
 
     if not card_id or not station_id:
         return jsonify(
@@ -1165,6 +1169,11 @@ def swipe():
 
     with db_lock:
         conn = db_connect()
+        if event_id:
+            existing = conn.execute("SELECT card_id, station_id, station_name, station_kind, action, duration_seconds, active_users, warning, details FROM swipe_events WHERE event_id = ?", (event_id,)).fetchone()
+            if existing:
+                conn.close()
+                return jsonify({**dict(existing), "ok": True, "duplicate": True})
         station = get_station_info(
             conn,
             station_id,
@@ -1182,10 +1191,41 @@ def swipe():
         else:
             result = handle_station_swipe(conn, card_id, station_id, station)
 
+        if event_id:
+            conn.execute("UPDATE swipe_events SET event_id = ? WHERE id = (SELECT MAX(id) FROM swipe_events)", (event_id,))
+
         conn.commit()
         conn.close()
 
     return jsonify(result)
+
+
+@app.post("/api/test-swipe")
+def test_swipe():
+    """Admin-only hardware-free swipe simulator for dashboard testing."""
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    card_id = str(data.get("card_id", "")).strip()
+    station_id = str(data.get("station_id", "")).strip()
+    if not card_id or not station_id:
+        return jsonify({"ok": False, "error": "Choose both a card and a station"}), 400
+
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        station = get_station_info(conn, station_id)
+        if station["station_kind"] == "door":
+            result = handle_door_swipe(conn, card_id, station_id, station["station_name"])
+        else:
+            result = handle_station_swipe(conn, card_id, station_id, station)
+        add_audit_log(conn, account, "test_swipe", "station", station_id, {"card_id": card_id})
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True, "simulated": True, **result})
 
 
 @app.get("/health")

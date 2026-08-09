@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Station Dashboard</title>
   <script>
-    document.documentElement.dataset.theme = localStorage.getItem("stationTheme") || "dark";
+    document.documentElement.dataset.theme = "dark";
   </script>
   <style>
     :root {
@@ -334,7 +334,6 @@
     .row-action { display: inline-flex; align-items: center; gap: 8px; }
     .incident-copy { display: grid; gap: 4px; }
     .incident-copy strong { color: var(--heading-ink); }
-    .theme-toggle { min-height: 34px; padding: 6px 10px; }
 
     .tab-button {
       min-height: 44px;
@@ -1244,7 +1243,6 @@
           <div id="access-status" class="subtle access-status" aria-live="polite" aria-atomic="true">View only</div>
         </div>
         <div id="connection" class="subtle" aria-live="polite" aria-atomic="true">Connecting...</div>
-        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme">Theme</button>
       </div>
     </header>
 
@@ -1496,6 +1494,17 @@
           <div id="certify-permissions-body" class="permission-results"></div>
         </div>
 
+        <section id="test-panel" class="panel full-row hidden">
+          <h2>Test Panel</h2>
+          <p class="panel-note">Simulate a reader swipe using real cards, station rules, certifications, and activity tracking. Test swipes are recorded in history and audit logs.</p>
+          <div class="form-grid">
+            <div><label for="test-card">Card</label><select id="test-card"></select></div>
+            <div><label for="test-station">Reader location</label><select id="test-station"></select></div>
+            <div class="full"><div id="test-result" class="subtle" aria-live="polite">Choose a card and reader location, then simulate a swipe.</div></div>
+          </div>
+          <div class="form-actions"><button id="test-swipe" class="primary" type="button">Simulate Swipe</button></div>
+        </section>
+
         <section id="audit-panel" class="panel full-row hidden">
           <div class="panel-heading">
             <h2>Audit Log</h2>
@@ -1720,6 +1729,10 @@
     const certifyPermissionsPanel = document.getElementById("certify-permissions-panel");
     const certifyPermissionFilter = document.getElementById("certify-permission-filter");
     const certifyPermissionsBody = document.getElementById("certify-permissions-body");
+    const testPanel = document.getElementById("test-panel");
+    const testCard = document.getElementById("test-card");
+    const testStation = document.getElementById("test-station");
+    const testResult = document.getElementById("test-result");
     const cardLock = document.getElementById("card-lock");
     const cardContent = document.getElementById("card-content");
     const cardFilter = document.getElementById("card-filter");
@@ -1734,7 +1747,6 @@
     const confirmAccept = document.getElementById("confirm-accept");
     const toast = document.getElementById("toast");
     const mobileTabMenu = document.getElementById("mobile-tab-menu");
-    const themeToggle = document.getElementById("theme-toggle");
     const swipeQuery = document.getElementById("swipe-query");
     const swipeStation = document.getElementById("swipe-station");
     const swipeWarningOnly = document.getElementById("swipe-warning-only");
@@ -2092,6 +2104,7 @@
       certEditPanel.classList.toggle("hidden", !certEditAccess);
       stationRulesPanel.classList.toggle("hidden", !stationRuleAccess);
       certifyPermissionsPanel.classList.toggle("hidden", !canManageCertifyPermissions());
+      testPanel.classList.toggle("hidden", !canManageAccounts());
       cardLock.classList.toggle("hidden", cardAccess);
       cardContent.classList.toggle("hidden", !cardAccess);
 
@@ -2911,6 +2924,7 @@
       renderCertifications();
       renderStationRules();
       renderCertifyPermissions();
+      renderTestPanel();
       renderAuditLog();
       renderCertCardLookup();
       renderCertPersonFilterLookup();
@@ -2940,6 +2954,36 @@
         row.addEventListener("click", selectCard);
         row.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectCard(); } });
       });
+    }
+
+    function renderTestPanel() {
+      if (!canManageAccounts()) return;
+      const selectedCard = testCard.value;
+      const selectedStation = testStation.value;
+      testCard.innerHTML = `<option value="">Choose a card</option>${state.cards.filter(card => card.active).map(card => `<option value="${escapeHtml(card.card_id)}">${escapeHtml(card.display_name || card.name || card.card_id)} — ${escapeHtml(card.card_id)}</option>`).join("")}`;
+      testStation.innerHTML = `<option value="">Choose a door or station</option>${state.stations.map(station => `<option value="${escapeHtml(station.station_id)}">${escapeHtml(station.station_name)} (${escapeHtml(station.station_kind)})</option>`).join("")}`;
+      testCard.value = selectedCard;
+      testStation.value = selectedStation;
+    }
+
+    async function simulateSwipe() {
+      if (!testCard.value || !testStation.value) {
+        testResult.textContent = "Choose both a card and a reader location.";
+        return;
+      }
+      testResult.textContent = "Simulating swipe...";
+      try {
+        const result = await postJson("/api/test-swipe", { card_id: testCard.value, station_id: testStation.value });
+        const action = actionLabel(result.action || "completed");
+        const warning = result.warning ? ` — ${warningLabel(result.warning)}` : "";
+        testResult.textContent = `Simulated: ${action}${warning}`;
+        showToast(`Test swipe: ${action}`);
+        await refreshDashboard();
+        await refreshAdmin();
+      } catch (error) {
+        testResult.textContent = error.message;
+        showToast(error.message, "error");
+      }
     }
 
     function renderPendingCards() {
@@ -3355,12 +3399,8 @@
     });
 
     mobileTabMenu.addEventListener("change", () => activateTab(mobileTabMenu.value));
-    themeToggle.addEventListener("click", () => {
-      const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = theme;
-      localStorage.setItem("stationTheme", theme);
-    });
     document.getElementById("swipe-refresh").addEventListener("click", refreshDashboard);
+    document.getElementById("test-swipe").addEventListener("click", simulateSwipe);
     [swipeQuery, swipeStation, swipeWarningOnly].forEach(input => input.addEventListener("change", () => refreshDashboard()));
 
     accessLogin.addEventListener("click", () => {

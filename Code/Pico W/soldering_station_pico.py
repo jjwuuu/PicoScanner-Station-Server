@@ -1,7 +1,9 @@
+import machine
 from machine import Pin
 import neopixel
 import network
 import time
+from ubinascii import hexlify
 
 try:
     import urequests
@@ -9,6 +11,7 @@ except ImportError:
     urequests = None
 
 from mfrc522 import MFRC522
+from offline_queue import OfflineQueue
 
 
 # Edit these for your hotspot and Pi server.
@@ -41,6 +44,8 @@ reader = MFRC522(
     cs=RFID_CS,
     rst=RFID_RST,
 )
+queue = OfflineQueue()
+event_counter = 0
 
 limit_switch = Pin(LIMIT_SWITCH_PIN, Pin.IN, Pin.PULL_UP)
 pixel = neopixel.NeoPixel(Pin(NEOPIXEL_PIN), 1)
@@ -194,6 +199,33 @@ def read_card_and_send(reads=6, required_hits=2):
     return None
 
 
+def event_for(card_id):
+    global event_counter
+    event_counter += 1
+    return "%s-%s-%s" % (hexlify(machine.unique_id()).decode(), time.ticks_ms(), event_counter)
+
+
+def post_event(data):
+    response = urequests.post(SERVER_URL, json=data, headers={"X-Station-Key": STATION_API_KEY})
+    result = response.json()
+    response.close()
+    return result
+
+
+def resend_queued():
+    if urequests is None or not wifi_connected():
+        return
+    event = queue.peek()
+    if not event:
+        return
+    try:
+        post_event(event)
+        queue.remove_first()
+        print("Queued swipe delivered; remaining:", len(queue))
+    except Exception as error:
+        print("Queued swipe still offline:", error)
+
+
 def send_swipe(card_id):
     if urequests is None:
         print("urequests is not installed")
@@ -204,21 +236,18 @@ def send_swipe(card_id):
         "station_id": STATION_ID,
         "station_name": STATION_NAME,
         "station_kind": STATION_KIND,
+        "event_id": event_for(card_id),
     }
 
     try:
-        response = urequests.post(
-            SERVER_URL,
-            json=data,
-            headers={"X-Station-Key": STATION_API_KEY},
-        )
-        result = response.json()
-        response.close()
+        result = post_event(data)
         print("Server response:", result)
         return result
     except Exception as error:
         print("Server error:", error)
-        return {"led_signal": "server_error", "error": str(error)}
+        pending = queue.add(data)
+        print("Swipe queued; pending:", pending)
+        return {"led_signal": "server_error", "error": "Swipe queued for retry"}
 
 
 def show_result(result):
@@ -246,6 +275,8 @@ while True:
 
     if not wlan.isconnected():
         wlan = connect_wifi()
+    else:
+        resend_queued()
 
     if limit_pressed():
         set_led("yellow")

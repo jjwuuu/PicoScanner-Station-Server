@@ -1,5 +1,7 @@
 ﻿Code/Original/pi_station_server/*.db
 Code/Original/pi_station_server/*.db-*
+Code/Pi 3/*.db
+Code/Pi 3/*.db-*
 Code/Wifi_V1/Pico/lib/wifi_info.py
 .env
 __pycache__/
