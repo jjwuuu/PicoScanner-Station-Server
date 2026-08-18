@@ -12,22 +12,22 @@
     },
     {
       "id": "3d-printing",
-      "name": "3D Printing Station",
+      "name": "3D Printing",
       "kind": "station"
     },
     {
       "id": "soldering",
-      "name": "Soldering Station",
+      "name": "Soldering",
       "kind": "station"
     },
     {
       "id": "embroidery",
-      "name": "Embroidery Station",
+      "name": "Embroidery",
       "kind": "station"
     },
     {
       "id": "sewing",
-      "name": "Sewing Station",
+      "name": "Sewing Training",
       "kind": "station"
     },
     {
@@ -36,13 +36,28 @@
       "kind": "station"
     },
     {
+      "id": "leather-working",
+      "name": "Leather Working",
+      "kind": "station"
+    },
+    {
       "id": "buttons-stickers",
-      "name": "Buttons/Stickers",
+      "name": "Button Making",
+      "kind": "station"
+    },
+    {
+      "id": "stickers",
+      "name": "Sticker Making",
       "kind": "station"
     },
     {
       "id": "vinyl",
-      "name": "Vinyl",
+      "name": "Vinyl / Heat Press",
+      "kind": "station"
+    },
+    {
+      "id": "letter-press",
+      "name": "Letterpress",
       "kind": "station"
     }
   ]

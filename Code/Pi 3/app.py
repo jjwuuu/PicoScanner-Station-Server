@@ -1,4 +1,6 @@
 import csv
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -9,24 +11,49 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from flask import Flask, Response, jsonify, request
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "simple_station_swipes.db")
+DB_PATH = os.environ.get(
+    "STATION_DB_PATH",
+    os.path.join(BASE_DIR, "simple_station_swipes.db"),
+)
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 DASHBOARD_PATH = os.path.join(BASE_DIR, "dashboard.html")
 BOOTSTRAP_ADMIN_CARD_ID = os.environ.get("STATION_BOOTSTRAP_ADMIN_CARD_ID", "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("STATION_BOOTSTRAP_ADMIN_PASSWORD", "")
 BOOTSTRAP_ADMIN_NAME = os.environ.get("STATION_BOOTSTRAP_ADMIN_NAME", "Bootstrap Admin")
+BOOTSTRAP_ADMIN_USERNAME = os.environ.get(
+    "STATION_BOOTSTRAP_ADMIN_USERNAME",
+    "",
+).strip().lower()
 STATION_API_KEY = os.environ.get("STATION_API_KEY", "").strip()
+PERSON_REF_SECRET = (
+    os.environ.get("STATION_PERSON_REF_SECRET", "").strip()
+    or STATION_API_KEY
+    or secrets.token_urlsafe(32)
+)
 ROLE_LEVELS = {"volunteer": 1, "staff": 2, "admin": 3}
 CERT_CONFIRM_SECONDS = 4
 CERT_MODE_SECONDS = 40
+SESSION_MAX_SECONDS = 12 * 60 * 60
+LOGIN_ATTEMPT_WINDOW_SECONDS = 5 * 60
+LOGIN_ATTEMPT_LIMIT = 5
+PENDING_CARD_DAYS = 30
+MAX_CSV_BYTES = 10 * 1024 * 1024
+MAX_ID_LENGTH = 128
+MAX_NAME_LENGTH = 200
+MAX_EMAIL_LENGTH = 254
+MAX_NOTES_LENGTH = 4000
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
 db_lock = threading.RLock()
+session_lock = threading.RLock()
 session_tokens = {}
+login_attempts = {}
 cert_modes = {}
 
 
@@ -35,7 +62,23 @@ def now_iso():
 
 
 def parse_iso(value):
-    return datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def elapsed_seconds(started_at, ended_at=None):
+    try:
+        start = (
+            started_at
+            if isinstance(started_at, datetime)
+            else parse_iso(started_at)
+        )
+        end = ended_at or datetime.now(timezone.utc)
+        return max(0, int((end - start).total_seconds()))
+    except (TypeError, ValueError, OverflowError):
+        return 0
 
 
 def normalize_access_role(value):
@@ -57,15 +100,16 @@ def role_allows(actual_role, *allowed_roles):
 
 
 def token_from_request():
-    return (
-        request.headers.get("X-Access-Token", "")
-        or request.args.get("access_token", "")
-        or ""
-    )
+    return request.headers.get("X-Access-Token", "") or ""
 
 
 def account_for_token(token):
-    session = session_tokens.get(token)
+    with session_lock:
+        session = session_tokens.get(token)
+        if session and session.get("expires_at", 0) <= time.time():
+            session_tokens.pop(token, None)
+            session = None
+
     if not session:
         return None
 
@@ -75,6 +119,7 @@ def account_for_token(token):
             """
             SELECT
                 user_accounts.card_id,
+                user_accounts.username,
                 user_accounts.role,
                 user_accounts.active,
                 cards.name,
@@ -88,7 +133,8 @@ def account_for_token(token):
         conn.close()
 
     if not row or not row["active"]:
-        session_tokens.pop(token, None)
+        with session_lock:
+            session_tokens.pop(token, None)
         return None
 
     return dict(row)
@@ -117,9 +163,124 @@ def require_station_api_key():
     return jsonify({"ok": False, "error": "Station API key required"}), 401
 
 
+def invalidate_sessions_for_card(card_id, except_token=""):
+    with session_lock:
+        for token, session in list(session_tokens.items()):
+            if session.get("card_id") == card_id and token != except_token:
+                session_tokens.pop(token, None)
+
+
+def login_attempt_key(login):
+    return (request.remote_addr or "unknown", str(login or "").strip().lower())
+
+
+def login_is_rate_limited(login):
+    key = login_attempt_key(login)
+    cutoff = time.time() - LOGIN_ATTEMPT_WINDOW_SECONDS
+    with session_lock:
+        attempts = [stamp for stamp in login_attempts.get(key, []) if stamp > cutoff]
+        if attempts:
+            login_attempts[key] = attempts
+        else:
+            login_attempts.pop(key, None)
+        return len(attempts) >= LOGIN_ATTEMPT_LIMIT
+
+
+def record_login_failure(login):
+    key = login_attempt_key(login)
+    cutoff = time.time() - LOGIN_ATTEMPT_WINDOW_SECONDS
+    with session_lock:
+        attempts = [stamp for stamp in login_attempts.get(key, []) if stamp > cutoff]
+        attempts.append(time.time())
+        login_attempts[key] = attempts
+
+
+def clear_login_failures(login):
+    with session_lock:
+        login_attempts.pop(login_attempt_key(login), None)
+
+
+def prune_in_memory_auth_state():
+    current_time = time.time()
+    login_cutoff = current_time - LOGIN_ATTEMPT_WINDOW_SECONDS
+    with session_lock:
+        for token, session in list(session_tokens.items()):
+            if session.get("expires_at", 0) <= current_time:
+                session_tokens.pop(token, None)
+        for key, attempts in list(login_attempts.items()):
+            recent_attempts = [stamp for stamp in attempts if stamp > login_cutoff]
+            if recent_attempts:
+                login_attempts[key] = recent_attempts
+            else:
+                login_attempts.pop(key, None)
+
+
+def validate_text(value, field, max_length, required=False):
+    text = str(value or "").strip()
+    if required and not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > max_length:
+        raise ValueError(f"{field} must be {max_length} characters or fewer")
+    return text
+
+
+def validate_email(value, required=False):
+    email = validate_text(value, "email", MAX_EMAIL_LENGTH, required)
+    if email and ("@" not in email or email.startswith("@") or email.endswith("@")):
+        raise ValueError("email must be a valid email address")
+    return email
+
+
+def request_json():
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    )
+    if (
+        request.path.startswith("/api/")
+        or request.path in ("/", "/dashboard")
+        or request.path.endswith(".csv")
+    ):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def upload_too_large(_error):
+    return jsonify(
+        {
+            "ok": False,
+            "error": f"Upload is too large; maximum size is {MAX_CSV_BYTES // (1024 * 1024)} MB",
+        }
+    ), 413
+
+
+@app.errorhandler(Exception)
+def unhandled_error(error):
+    if isinstance(error, HTTPException):
+        return error
+
+    app.logger.exception("Unhandled request error")
+    if request.path.startswith("/api/") or request.path == "/swipe":
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
+    return Response("Internal server error", status=500, mimetype="text/plain")
+
+
 def db_connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -132,12 +293,15 @@ def ensure_column(conn, table, column, definition):
 def init_db():
     with db_lock:
         conn = db_connect()
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS stations (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 kind TEXT NOT NULL DEFAULT 'station',
+                dashboard_visible INTEGER NOT NULL DEFAULT 1,
                 requires_certification INTEGER NOT NULL DEFAULT 1,
                 cert_override_active INTEGER NOT NULL DEFAULT 0,
                 cert_override_by TEXT NOT NULL DEFAULT '',
@@ -160,19 +324,31 @@ def init_db():
                 started_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS cards (
-                card_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS people (
+                bronco_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',
                 email TEXT NOT NULL DEFAULT '',
-                student_id TEXT NOT NULL DEFAULT '',
                 designation TEXT NOT NULL DEFAULT 'User',
                 active INTEGER NOT NULL DEFAULT 1,
                 notes TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS cards (
+                card_id TEXT PRIMARY KEY,
+                bronco_id TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL DEFAULT '',
+                email TEXT NOT NULL DEFAULT '',
+                designation TEXT NOT NULL DEFAULT 'User',
+                active INTEGER NOT NULL DEFAULT 1,
+                notes TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (bronco_id) REFERENCES people(bronco_id)
+            );
+
             CREATE TABLE IF NOT EXISTS user_accounts (
                 card_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL DEFAULT '',
                 role TEXT NOT NULL DEFAULT 'Volunteer',
                 password_hash TEXT NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1,
@@ -194,12 +370,39 @@ def init_db():
                 FOREIGN KEY (station_id) REFERENCES stations(id)
             );
 
+            CREATE TABLE IF NOT EXISTS bronco_certifications (
+                bronco_id TEXT NOT NULL,
+                station_id TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                notes TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (bronco_id, station_id),
+                FOREIGN KEY (bronco_id) REFERENCES people(bronco_id),
+                FOREIGN KEY (station_id) REFERENCES stations(id)
+            );
+
             CREATE TABLE IF NOT EXISTS certify_permissions (
                 card_id TEXT NOT NULL,
                 station_id TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (card_id, station_id),
                 FOREIGN KEY (card_id) REFERENCES user_accounts(card_id),
+                FOREIGN KEY (station_id) REFERENCES stations(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS canvas_sync_tasks (
+                bronco_id TEXT NOT NULL,
+                card_id TEXT NOT NULL DEFAULT '',
+                station_id TEXT NOT NULL,
+                desired_active INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                created_by_card_id TEXT NOT NULL DEFAULT '',
+                created_by_name TEXT NOT NULL DEFAULT '',
+                completed_at TEXT NOT NULL DEFAULT '',
+                completed_by_card_id TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (bronco_id, station_id),
+                FOREIGN KEY (bronco_id) REFERENCES people(bronco_id),
                 FOREIGN KEY (station_id) REFERENCES stations(id)
             );
 
@@ -215,8 +418,14 @@ def init_db():
                 duration_seconds INTEGER,
                 active_users INTEGER NOT NULL,
                 warning TEXT NOT NULL DEFAULT '',
-                details TEXT NOT NULL DEFAULT ''
-                ,event_id TEXT NOT NULL DEFAULT ''
+                details TEXT NOT NULL DEFAULT '',
+                event_id TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS pending_card_dismissals (
+                card_id TEXT PRIMARY KEY,
+                ignored_through TEXT NOT NULL,
+                ignored_through_event_id INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -234,14 +443,46 @@ def init_db():
         )
 
         ensure_column(conn, "stations", "kind", "TEXT NOT NULL DEFAULT 'station'")
+        ensure_column(
+            conn,
+            "stations",
+            "dashboard_visible",
+            "INTEGER NOT NULL DEFAULT 1",
+        )
         ensure_column(conn, "swipe_events", "station_kind", "TEXT NOT NULL DEFAULT 'station'")
         ensure_column(conn, "swipe_events", "allowed", "INTEGER NOT NULL DEFAULT 1")
         ensure_column(conn, "swipe_events", "warning", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "swipe_events", "details", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "swipe_events", "event_id", "TEXT NOT NULL DEFAULT ''")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_swipe_events_event_id ON swipe_events(event_id) WHERE event_id != ''")
-        ensure_column(conn, "cards", "student_id", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(
+            conn,
+            "pending_card_dismissals",
+            "ignored_through_event_id",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        conn.execute(
+            """
+            UPDATE swipe_events
+            SET event_id = ''
+            WHERE event_id != ''
+              AND id NOT IN (
+                  SELECT MIN(id)
+                  FROM swipe_events
+                  WHERE event_id != ''
+                  GROUP BY event_id
+              )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_swipe_events_event_id
+            ON swipe_events(event_id)
+            WHERE event_id != ''
+            """
+        )
+        ensure_column(conn, "cards", "bronco_id", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "cards", "designation", "TEXT NOT NULL DEFAULT 'User'")
+        ensure_column(conn, "user_accounts", "username", "TEXT NOT NULL DEFAULT ''")
         ensure_column(
             conn,
             "stations",
@@ -286,10 +527,31 @@ def init_db():
             "TEXT NOT NULL DEFAULT ''",
         )
 
+        conn.execute("DROP INDEX IF EXISTS idx_certifications_card_station")
         conn.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_certifications_card_station
-            ON certifications(card_id, station_id)
+            CREATE INDEX IF NOT EXISTS idx_people_email
+            ON people(email)
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_people_bronco_id_unique
+            ON people(lower(bronco_id))
+            WHERE bronco_id != ''
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_cards_bronco_id
+            ON cards(bronco_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_bronco_id_unique
+            ON cards(lower(bronco_id))
+            WHERE bronco_id != ''
             """
         )
         conn.execute(
@@ -306,8 +568,33 @@ def init_db():
         )
         conn.execute(
             """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_username
+            ON user_accounts(lower(username))
+            WHERE username != ''
+            """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_swipe_events_timestamp
             ON swipe_events(timestamp)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_swipe_events_pending_cards
+            ON swipe_events(warning, card_id, id DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_active_sessions_card
+            ON active_sessions(card_id, station_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_active_sessions_station
+            ON active_sessions(station_id)
             """
         )
         conn.execute(
@@ -316,6 +603,39 @@ def init_db():
             ON audit_log(timestamp)
             """
         )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_canvas_sync_tasks_status
+            ON canvas_sync_tasks(status, created_at)
+            """
+        )
+        blank_usernames = conn.execute(
+            """
+            SELECT user_accounts.card_id, cards.email
+            FROM user_accounts
+            JOIN cards ON cards.card_id = user_accounts.card_id
+            WHERE user_accounts.username = ''
+            """
+        ).fetchall()
+        for row in blank_usernames:
+            username = login_username_from_email(row["email"])
+            if not username:
+                continue
+            duplicate = conn.execute(
+                """
+                SELECT card_id
+                FROM user_accounts
+                WHERE lower(username) = lower(?) AND card_id != ?
+                """,
+                (username, row["card_id"]),
+            ).fetchone()
+            if duplicate:
+                username = row["card_id"]
+            conn.execute(
+                "UPDATE user_accounts SET username = ? WHERE card_id = ?",
+                (username, row["card_id"]),
+            )
+
         conn.execute("PRAGMA optimize")
 
         conn.commit()
@@ -326,12 +646,50 @@ def seed_stations():
     if not os.path.exists(CONFIG_PATH):
         return
 
-    with open(CONFIG_PATH, "r", encoding="utf-8") as file:
-        config = json.load(file)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as file:
+            config = json.load(file)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Unable to read station config: {error}") from error
+
+    stations = config.get("stations")
+    if not isinstance(stations, list):
+        raise RuntimeError("config.json must contain a stations list")
+
+    validated_stations = []
+    seen_ids = set()
+    for index, station in enumerate(stations, start=1):
+        if not isinstance(station, dict):
+            raise RuntimeError(f"Station {index} in config.json must be an object")
+        try:
+            station_id = validate_text(
+                station.get("id"),
+                f"station {index} id",
+                MAX_ID_LENGTH,
+                required=True,
+            )
+            station_name = validate_text(
+                station.get("name"),
+                f"station {index} name",
+                MAX_NAME_LENGTH,
+                required=True,
+            )
+        except ValueError as error:
+            raise RuntimeError(str(error)) from error
+        station_kind = str(station.get("kind", "station")).strip().lower()
+        if station_kind not in ("door", "station"):
+            raise RuntimeError(
+                f"Station {station_id} has invalid kind {station_kind!r}"
+            )
+        normalized_id = station_id.lower()
+        if normalized_id in seen_ids:
+            raise RuntimeError(f"Duplicate station id in config.json: {station_id}")
+        seen_ids.add(normalized_id)
+        validated_stations.append((station_id, station_name, station_kind))
 
     with db_lock:
         conn = db_connect()
-        for station in config.get("stations", []):
+        for station_id, station_name, station_kind in validated_stations:
             conn.execute(
                 """
                 INSERT INTO stations (id, name, kind)
@@ -340,11 +698,7 @@ def seed_stations():
                     name = excluded.name,
                     kind = excluded.kind
                 """,
-                (
-                    station["id"],
-                    station["name"],
-                    station.get("kind", "station"),
-                ),
+                (station_id, station_name, station_kind),
             )
         conn.commit()
         conn.close()
@@ -365,6 +719,41 @@ def bootstrap_admin():
         ).fetchone()["count"]
 
         if admin_count:
+            if BOOTSTRAP_ADMIN_USERNAME:
+                existing_bootstrap = conn.execute(
+                    """
+                    SELECT username
+                    FROM user_accounts
+                    WHERE card_id = ?
+                    """,
+                    (BOOTSTRAP_ADMIN_CARD_ID,),
+                ).fetchone()
+                if existing_bootstrap and (
+                    not existing_bootstrap["username"]
+                    or existing_bootstrap["username"] == BOOTSTRAP_ADMIN_CARD_ID
+                ):
+                    duplicate = conn.execute(
+                        """
+                        SELECT card_id
+                        FROM user_accounts
+                        WHERE lower(username) = lower(?) AND card_id != ?
+                        """,
+                        (BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_CARD_ID),
+                    ).fetchone()
+                    if not duplicate:
+                        conn.execute(
+                            """
+                            UPDATE user_accounts
+                            SET username = ?, updated_at = ?
+                            WHERE card_id = ?
+                            """,
+                            (
+                                BOOTSTRAP_ADMIN_USERNAME,
+                                now_iso(),
+                                BOOTSTRAP_ADMIN_CARD_ID,
+                            ),
+                        )
+                        conn.commit()
             conn.close()
             return
 
@@ -381,10 +770,11 @@ def bootstrap_admin():
         conn.execute(
             """
             INSERT INTO user_accounts (
-                card_id, role, password_hash, active, updated_at
+                card_id, username, role, password_hash, active, updated_at
             )
-            VALUES (?, 'Admin', ?, 1, ?)
+            VALUES (?, ?, 'Admin', ?, 1, ?)
             ON CONFLICT(card_id) DO UPDATE SET
+                username = excluded.username,
                 role = 'Admin',
                 password_hash = excluded.password_hash,
                 active = 1,
@@ -392,9 +782,22 @@ def bootstrap_admin():
             """,
             (
                 BOOTSTRAP_ADMIN_CARD_ID,
+                BOOTSTRAP_ADMIN_USERNAME or BOOTSTRAP_ADMIN_CARD_ID,
                 generate_password_hash(BOOTSTRAP_ADMIN_PASSWORD),
                 timestamp,
             ),
+        )
+        add_audit_log(
+            conn,
+            {
+                "card_id": BOOTSTRAP_ADMIN_CARD_ID,
+                "name": BOOTSTRAP_ADMIN_NAME,
+                "role": "Admin",
+            },
+            "bootstrap_admin_created",
+            "account",
+            BOOTSTRAP_ADMIN_CARD_ID,
+            {"username": BOOTSTRAP_ADMIN_USERNAME or BOOTSTRAP_ADMIN_CARD_ID},
         )
         conn.commit()
         conn.close()
@@ -415,7 +818,7 @@ def override_is_effective(station):
 
     try:
         return parse_iso(expires_at) > datetime.now(timezone.utc)
-    except ValueError:
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
@@ -466,8 +869,13 @@ def get_station_info(conn, station_id, provided_name="", provided_kind=""):
             "cert_override_expires_at": station["cert_override_expires_at"] or "",
         }
 
-    station_name = provided_name or station_id
-    station_kind = provided_kind or infer_kind(station_id, station_name)
+    station_name = str(provided_name or station_id)[:MAX_NAME_LENGTH]
+    normalized_kind = str(provided_kind or "").strip().lower()
+    station_kind = (
+        normalized_kind
+        if normalized_kind in ("door", "station")
+        else infer_kind(station_id, station_name)
+    )
 
     conn.execute(
         """
@@ -499,7 +907,16 @@ def parse_bool(value):
         return value
     if isinstance(value, int):
         return value != 0
-    return str(value).strip().lower() in ("1", "true", "yes", "on", "active")
+    return str(value).strip().lower() in (
+        "1",
+        "1.0",
+        "true",
+        "yes",
+        "y",
+        "on",
+        "active",
+        "checked",
+    )
 
 
 def normalize_designation(value):
@@ -512,10 +929,235 @@ def normalize_designation(value):
     return options.get(text, "User")
 
 
+def login_username_from_email(email):
+    email = str(email or "").strip()
+    if "@" not in email:
+        return ""
+    return email.split("@", 1)[0].strip().lower()
+
+
+def csv_text_from_request():
+    if request.files:
+        file = next(iter(request.files.values()))
+        try:
+            return file.read().decode("utf-8-sig")
+        except UnicodeDecodeError as error:
+            raise ValueError("CSV must be UTF-8 encoded") from error
+
+    data = request_json()
+    return str(data.get("csv", data.get("text", "")))
+
+
+def normalized_csv_rows(text):
+    text = str(text or "")
+    if not text.strip():
+        return []
+
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",\t;")
+    except csv.Error:
+        dialect = csv.excel_tab if "\t" in sample.splitlines()[0] else csv.excel
+
+    rows = []
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    for raw in reader:
+        row = {}
+        for key, value in raw.items():
+            if key is None:
+                continue
+            clean_key = str(key).strip().lower().replace(" ", "_").replace("-", "_")
+            row[clean_key] = str(value or "").strip()
+        rows.append(row)
+    return rows
+
+
+def row_value(row, *keys):
+    for key in keys:
+        clean_key = str(key).strip().lower().replace(" ", "_").replace("-", "_")
+        value = row.get(clean_key, "")
+        if value:
+            return value
+    return ""
+
+
+CERTIFICATION_IMPORT_COLUMNS = (
+    ("Sticker Making - In Person (1253702)", "1253702", "stickers"),
+    ("Button Making - In Person (1253671)", "1253671", "buttons-stickers"),
+    ("Leather Work In-person Certification (1253687)", "1253687", "leather-working"),
+    ("3D Printing - In Person Component (1253668)", "1253668", "3d-printing"),
+    ("Sewing Training - In Person (1253700)", "1253700", "sewing"),
+    ("Soldering & Power Supply - In Person (1253701)", "1253701", "soldering"),
+    ("Embroidery Training- In Person (1253680)", "1253680", "embroidery"),
+    ("Vinyl Cutting - In Person (1253709)", "1253709", "vinyl"),
+    ("Letterpress - In Person Component (1253691)", "1253691", "letter-press"),
+)
+
+
+def student_name_from_row(row):
+    name = row_value(row, "student", "name", "person", "full_name")
+    if "," not in name:
+        return name
+
+    last_name, first_name = (part.strip() for part in name.split(",", 1))
+    return " ".join(part for part in (first_name, last_name) if part)
+
+
+def certification_import_value(row, canvas_course_id):
+    for key, value in row.items():
+        if canvas_course_id in key:
+            return 1 if parse_bool(value) else 0
+    return None
+
+
+def bronco_id_from_row(row):
+    return row_value(row, "bid", "bronco_id", "broncoid", "bronco_number")
+
+
+def person_row(conn, bronco_id):
+    return conn.execute(
+        """
+        SELECT bronco_id, name, email, designation, active, notes, updated_at
+        FROM people
+        WHERE lower(bronco_id) = lower(?)
+        """,
+        (bronco_id,),
+    ).fetchone()
+
+
+def person_ref_for_bronco_id(bronco_id):
+    normalized = str(bronco_id or "").strip().lower()
+    if not normalized:
+        return ""
+    return hmac.new(
+        PERSON_REF_SECRET.encode("utf-8"),
+        normalized.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def person_row_from_ref(conn, person_ref):
+    candidate = str(person_ref or "").strip()
+    if not candidate:
+        return None
+
+    rows = conn.execute(
+        """
+        SELECT bronco_id, name, email, designation, active, notes, updated_at
+        FROM people
+        """
+    ).fetchall()
+    for row in rows:
+        expected = person_ref_for_bronco_id(row["bronco_id"])
+        if secrets.compare_digest(candidate, expected):
+            return row
+    return None
+
+
+def people_rows(conn, include_bronco_id=False):
+    rows = conn.execute(
+        """
+        SELECT bronco_id, name, email, designation, active, notes, updated_at
+        FROM people
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM cards
+            WHERE cards.bronco_id != ''
+              AND lower(cards.bronco_id) = lower(people.bronco_id)
+        )
+        ORDER BY
+            CASE WHEN name = '' THEN 1 ELSE 0 END,
+            name,
+            bronco_id
+        """
+    ).fetchall()
+
+    result = []
+    for row in rows:
+        person = {
+            "person_ref": person_ref_for_bronco_id(row["bronco_id"]),
+            "name": row["name"],
+            "email": row["email"],
+            "designation": row["designation"],
+            "active": bool(row["active"]),
+            "notes": row["notes"],
+            "updated_at": row["updated_at"],
+            "display_name": row["name"] or "Imported person",
+        }
+        if include_bronco_id:
+            person["bronco_id"] = row["bronco_id"]
+        result.append(person)
+
+    return result
+
+def sync_bronco_certifications_to_card(conn, bronco_id, card_id, actor=None):
+    if not bronco_id or not card_id:
+        return 0
+
+    rows = conn.execute(
+        """
+        SELECT bronco_id, station_id, active, notes, updated_at
+        FROM bronco_certifications
+        WHERE bronco_id = ?
+        """,
+        (bronco_id,),
+    ).fetchall()
+
+    timestamp = now_iso()
+    count = 0
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO certifications (
+                card_id,
+                station_id,
+                active,
+                notes,
+                updated_at,
+                granted_via,
+                granted_by,
+                granted_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'import', ?, ?)
+            ON CONFLICT(card_id, station_id) DO UPDATE SET
+                active = excluded.active,
+                notes = CASE
+                    WHEN certifications.notes = '' THEN excluded.notes
+                    ELSE certifications.notes
+                END,
+                updated_at = excluded.updated_at,
+                granted_via = CASE
+                    WHEN excluded.active = 1 THEN excluded.granted_via
+                    ELSE certifications.granted_via
+                END,
+                granted_by = CASE
+                    WHEN excluded.active = 1 THEN excluded.granted_by
+                    ELSE certifications.granted_by
+                END,
+                granted_at = CASE
+                    WHEN excluded.active = 1 THEN excluded.granted_at
+                    ELSE certifications.granted_at
+                END
+            """,
+            (
+                card_id,
+                row["station_id"],
+                row["active"],
+                row["notes"],
+                timestamp,
+                account_field(actor, "card_id"),
+                timestamp,
+            ),
+        )
+        count += 1
+
+    return count
+
+
 def card_row(conn, card_id):
     return conn.execute(
         """
-        SELECT card_id, name, email, student_id, designation, active, notes, updated_at
+        SELECT card_id, bronco_id, name, email, designation, active, notes, updated_at
         FROM cards
         WHERE card_id = ?
         """,
@@ -563,6 +1205,87 @@ def add_audit_log(conn, account, action, target_type="", target_id="", details=N
             json.dumps(details or {}, sort_keys=True),
         ),
     )
+
+
+def queue_canvas_sync_task(conn, card, station_id, active, actor=None):
+    bronco_id = account_field(card, "bronco_id")
+    if not bronco_id:
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO canvas_sync_tasks (
+            bronco_id,
+            card_id,
+            station_id,
+            desired_active,
+            status,
+            created_at,
+            created_by_card_id,
+            created_by_name,
+            completed_at,
+            completed_by_card_id
+        )
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, '', '')
+        ON CONFLICT(bronco_id, station_id) DO UPDATE SET
+            card_id = excluded.card_id,
+            desired_active = excluded.desired_active,
+            status = 'pending',
+            created_at = excluded.created_at,
+            created_by_card_id = excluded.created_by_card_id,
+            created_by_name = excluded.created_by_name,
+            completed_at = '',
+            completed_by_card_id = ''
+        """,
+        (
+            bronco_id,
+            account_field(card, "card_id"),
+            station_id,
+            1 if active else 0,
+            now_iso(),
+            account_field(actor, "card_id"),
+            account_field(actor, "name"),
+        ),
+    )
+    return True
+
+
+def canvas_sync_task_rows(conn):
+    rows = conn.execute(
+        """
+        SELECT
+            canvas_sync_tasks.bronco_id,
+            canvas_sync_tasks.card_id,
+            canvas_sync_tasks.station_id,
+            canvas_sync_tasks.desired_active,
+            canvas_sync_tasks.created_at,
+            canvas_sync_tasks.created_by_card_id,
+            canvas_sync_tasks.created_by_name,
+            people.name,
+            people.email,
+            stations.name AS station_name
+        FROM canvas_sync_tasks
+        JOIN people ON people.bronco_id = canvas_sync_tasks.bronco_id
+        JOIN stations ON stations.id = canvas_sync_tasks.station_id
+        WHERE canvas_sync_tasks.status = 'pending'
+        ORDER BY canvas_sync_tasks.created_at, people.name, stations.name
+        """
+    ).fetchall()
+    return [
+        {
+            "bronco_id": row["bronco_id"],
+            "card_id": row["card_id"],
+            "station_id": row["station_id"],
+            "station_name": row["station_name"],
+            "desired_active": bool(row["desired_active"]),
+            "created_at": row["created_at"],
+            "created_by_card_id": row["created_by_card_id"],
+            "created_by_name": row["created_by_name"],
+            "name": row["name"],
+            "email": row["email"],
+        }
+        for row in rows
+    ]
 
 
 def card_can_enter(row):
@@ -688,22 +1411,20 @@ def arm_cert_mode(station_id, grantor):
     return cert_modes[station_id]
 
 
-def cert_mode_response(conn, card_id, station, action, led_signal, mode):
-    return {
-        "card_id": card_id,
-        "station_id": station["station_id"],
-        "station_name": station["station_name"],
-        "station_kind": "station",
-        "timestamp": now_iso(),
-        "action": action,
-        "allowed": True,
-        "duration_seconds": None,
-        "active_users": building_active_count(conn),
-        "warning": "",
-        "details": "",
-        "led_signal": led_signal,
-        "cert_mode_expires_at": mode["expires_at"],
-    }
+def cert_mode_response(conn, card_id, station, action, led_signal, mode, event_id=""):
+    result = log_event(
+        conn,
+        card_id,
+        station["station_id"],
+        station["station_name"],
+        "station",
+        action,
+        details=f"Certification mode initiated by card {card_id}",
+        event_id=event_id,
+    )
+    result["led_signal"] = led_signal
+    result["cert_mode_expires_at"] = mode["expires_at"]
+    return result
 
 
 def is_certified(conn, card_id, station_id):
@@ -729,6 +1450,7 @@ def log_event(
     duration_seconds=None,
     warning="",
     details="",
+    event_id="",
 ):
     event_time = now_iso()
     active_users = building_active_count(conn)
@@ -737,9 +1459,10 @@ def log_event(
         """
         INSERT INTO swipe_events (
             card_id, station_id, station_name, station_kind, timestamp,
-            action, allowed, duration_seconds, active_users, warning, details
+            action, allowed, duration_seconds, active_users, warning, details,
+            event_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             card_id,
@@ -753,6 +1476,7 @@ def log_event(
             active_users,
             warning,
             details,
+            event_id,
         ),
     )
 
@@ -774,6 +1498,34 @@ def log_event(
     }
 
 
+def logged_event_response(row):
+    action = row["action"]
+    allowed = bool(row["allowed"])
+    if action == "cert_mode_pending":
+        led_signal = "cert_mode_pending"
+    elif action == "cert_mode_armed":
+        led_signal = "cert_mode_armed"
+    elif action == "certification_granted":
+        led_signal = "cert_success"
+    else:
+        led_signal = "access_granted" if allowed else "access_denied"
+
+    return {
+        "card_id": row["card_id"],
+        "station_id": row["station_id"],
+        "station_name": row["station_name"],
+        "station_kind": row["station_kind"],
+        "timestamp": row["timestamp"],
+        "action": action,
+        "allowed": allowed,
+        "duration_seconds": row["duration_seconds"],
+        "active_users": row["active_users"],
+        "warning": row["warning"],
+        "details": row["details"],
+        "led_signal": led_signal,
+    }
+
+
 def active_station_sessions_for_card(conn, card_id):
     return conn.execute(
         """
@@ -786,7 +1538,7 @@ def active_station_sessions_for_card(conn, card_id):
     ).fetchall()
 
 
-def handle_door_swipe(conn, card_id, door_id, door_name):
+def handle_door_swipe(conn, card_id, door_id, door_name, event_id=""):
     card = card_row(conn, card_id)
     active_person = conn.execute(
         """
@@ -809,6 +1561,7 @@ def handle_door_swipe(conn, card_id, door_id, door_name):
                 allowed=False,
                 warning="unknown_card",
                 details="Card is not in the card database",
+                event_id=event_id,
             )
 
         if not card_can_enter(card):
@@ -822,6 +1575,7 @@ def handle_door_swipe(conn, card_id, door_id, door_name):
                 allowed=False,
                 warning="inactive_card",
                 details="Card is disabled in the card database",
+                event_id=event_id,
             )
 
         conn.execute(
@@ -833,11 +1587,19 @@ def handle_door_swipe(conn, card_id, door_id, door_name):
             """,
             (card_id, now_iso(), door_id, door_name),
         )
-        return log_event(conn, card_id, door_id, door_name, "door", "enter")
+        return log_event(
+            conn,
+            card_id,
+            door_id,
+            door_name,
+            "door",
+            "enter",
+            event_id=event_id,
+        )
 
     exited_at = datetime.now(timezone.utc).replace(microsecond=0)
-    entered_at = parse_iso(active_person["entered_at"])
-    duration_seconds = int((exited_at - entered_at).total_seconds())
+    entered_at = active_person["entered_at"]
+    duration_seconds = elapsed_seconds(entered_at, exited_at)
     open_sessions = active_station_sessions_for_card(conn, card_id)
 
     conn.execute("DELETE FROM active_people WHERE card_id = ?", (card_id,))
@@ -850,8 +1612,8 @@ def handle_door_swipe(conn, card_id, door_id, door_name):
         details = "; ".join(row["station_name"] for row in open_sessions)
 
         for session in open_sessions:
-            started_at = parse_iso(session["started_at"])
-            station_duration = int((exited_at - started_at).total_seconds())
+            started_at = session["started_at"]
+            station_duration = elapsed_seconds(started_at, exited_at)
             conn.execute("DELETE FROM active_sessions WHERE id = ?", (session["id"],))
             log_event(
                 conn,
@@ -875,10 +1637,11 @@ def handle_door_swipe(conn, card_id, door_id, door_name):
         duration_seconds=duration_seconds,
         warning=warning,
         details=details,
+        event_id=event_id,
     )
 
 
-def grant_certification_via_swipe(conn, card, station, mode):
+def grant_certification_via_swipe(conn, card, station, mode, event_id=""):
     timestamp = now_iso()
     grantor_card_id = mode["grantor_card_id"]
     grantor_name = mode["grantor_name"]
@@ -918,13 +1681,43 @@ def grant_certification_via_swipe(conn, card, station, mode):
         ),
     )
 
+    if card["bronco_id"]:
+        conn.execute(
+            """
+            INSERT INTO bronco_certifications (
+                bronco_id, station_id, active, notes, updated_at
+            )
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(bronco_id, station_id) DO UPDATE SET
+                active = 1,
+                notes = CASE
+                    WHEN bronco_certifications.notes = '' THEN excluded.notes
+                    ELSE bronco_certifications.notes
+                END,
+                updated_at = excluded.updated_at
+            """,
+            (
+                card["bronco_id"],
+                station["station_id"],
+                f"Swipe-certified by {grantor_name}",
+                timestamp,
+            ),
+        )
+    grantor_account = {
+        "card_id": grantor_card_id,
+        "name": grantor_name,
+        "role": mode.get("grantor_role", ""),
+    }
+    queue_canvas_sync_task(
+        conn,
+        card,
+        station["station_id"],
+        True,
+        grantor_account,
+    )
     add_audit_log(
         conn,
-        {
-            "card_id": grantor_card_id,
-            "name": grantor_name,
-            "role": mode.get("grantor_role", ""),
-        },
+        grantor_account,
         "certification_granted_via_swipe",
         "certification",
         f"{card['card_id']}:{station['station_id']}",
@@ -949,12 +1742,13 @@ def grant_certification_via_swipe(conn, card, station, mode):
             f"{trainee_name} certified for {station['station_name']} "
             f"via swipe by {grantor_name}"
         ),
+        event_id=event_id,
     )
     result["led_signal"] = "cert_success"
     return result
 
 
-def handle_station_swipe(conn, card_id, station_id, station):
+def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
     station_name = station["station_name"]
     requires_certification = station["requires_certification"]
     skip_cert_mode_for_this_swipe = False
@@ -971,8 +1765,8 @@ def handle_station_swipe(conn, card_id, station_id, station):
 
     if active_session:
         ended_at = datetime.now(timezone.utc).replace(microsecond=0)
-        started_at = parse_iso(active_session["started_at"])
-        duration_seconds = int((ended_at - started_at).total_seconds())
+        started_at = active_session["started_at"]
+        duration_seconds = elapsed_seconds(started_at, ended_at)
 
         conn.execute("DELETE FROM active_sessions WHERE id = ?", (active_session["id"],))
         warning, details = station_override_warning(station)
@@ -986,6 +1780,7 @@ def handle_station_swipe(conn, card_id, station_id, station):
             duration_seconds=duration_seconds,
             warning=warning,
             details=details,
+            event_id=event_id,
         )
 
     if requires_certification:
@@ -1002,6 +1797,7 @@ def handle_station_swipe(conn, card_id, station_id, station):
                         "cert_mode_armed",
                         "cert_mode_armed",
                         mode,
+                        event_id,
                     )
                 cert_modes.pop(station_id, None)
             else:
@@ -1022,6 +1818,7 @@ def handle_station_swipe(conn, card_id, station_id, station):
             allowed=False,
             warning="unknown_card",
             details="Card is not in the card database",
+            event_id=event_id,
         )
 
     if not card_can_enter(card):
@@ -1035,6 +1832,7 @@ def handle_station_swipe(conn, card_id, station_id, station):
             allowed=False,
             warning="inactive_card",
             details="Card is disabled in the card database",
+            event_id=event_id,
         )
 
     grantor = (
@@ -1055,8 +1853,15 @@ def handle_station_swipe(conn, card_id, station_id, station):
                     "cert_mode_armed",
                     "cert_mode_armed",
                     mode,
+                    event_id,
                 )
-            return grant_certification_via_swipe(conn, card, station, mode)
+            return grant_certification_via_swipe(
+                conn,
+                card,
+                station,
+                mode,
+                event_id,
+            )
 
         if grantor:
             mode = start_pending_cert_mode(station_id, grantor)
@@ -1067,6 +1872,7 @@ def handle_station_swipe(conn, card_id, station_id, station):
                 "cert_mode_pending",
                 "cert_mode_pending",
                 mode,
+                event_id,
             )
 
     override_active = override_is_effective(station)
@@ -1086,14 +1892,15 @@ def handle_station_swipe(conn, card_id, station_id, station):
             allowed=False,
             warning="not_certified",
             details="Card is not certified for this station",
+            event_id=event_id,
         )
 
     moved_from = active_station_sessions_for_card(conn, card_id)
     if moved_from:
         ended_at = datetime.now(timezone.utc).replace(microsecond=0)
         for session in moved_from:
-            started_at = parse_iso(session["started_at"])
-            station_duration = int((ended_at - started_at).total_seconds())
+            started_at = session["started_at"]
+            station_duration = elapsed_seconds(started_at, ended_at)
             conn.execute("DELETE FROM active_sessions WHERE id = ?", (session["id"],))
             log_event(
                 conn,
@@ -1142,6 +1949,7 @@ def handle_station_swipe(conn, card_id, station_id, station):
         "station_in",
         warning=warning,
         details=details,
+        event_id=event_id,
     )
 
 
@@ -1151,29 +1959,66 @@ def swipe():
     if key_error:
         return key_error
 
-    data = request.get_json(silent=True) or {}
-    card_id = str(data.get("card_id", "")).strip()
-    station_id = str(data.get("station_id", "")).strip()
-    station_name = str(data.get("station_name", "")).strip()
-    station_kind = str(data.get("station_kind", data.get("kind", ""))).strip()
-    event_id = str(data.get("event_id", "")).strip()
+    data = request_json()
+    try:
+        card_id = validate_text(
+            data.get("card_id"),
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_id = validate_text(
+            data.get("station_id"),
+            "station_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_name = validate_text(
+            data.get("station_name"),
+            "station_name",
+            MAX_NAME_LENGTH,
+        )
+        event_id = validate_text(
+            data.get("event_id"),
+            "event_id",
+            MAX_ID_LENGTH,
+        )
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
 
-    if not card_id or not station_id:
-        return jsonify(
-            {
-                "error": "card_id and station_id are required",
-                "card_id": card_id,
-                "station_id": station_id,
-            }
-        ), 400
+    station_kind = str(data.get("station_kind", data.get("kind", ""))).strip()
 
     with db_lock:
         conn = db_connect()
         if event_id:
-            existing = conn.execute("SELECT card_id, station_id, station_name, station_kind, action, duration_seconds, active_users, warning, details FROM swipe_events WHERE event_id = ?", (event_id,)).fetchone()
+            existing = conn.execute(
+                """
+                SELECT
+                    card_id,
+                    station_id,
+                    station_name,
+                    station_kind,
+                    timestamp,
+                    action,
+                    allowed,
+                    duration_seconds,
+                    active_users,
+                    warning,
+                    details
+                FROM swipe_events
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            ).fetchone()
             if existing:
                 conn.close()
-                return jsonify({**dict(existing), "ok": True, "duplicate": True})
+                return jsonify(
+                    {
+                        "ok": True,
+                        "duplicate": True,
+                        **logged_event_response(existing),
+                    }
+                )
         station = get_station_info(
             conn,
             station_id,
@@ -1187,17 +2032,21 @@ def swipe():
                 card_id,
                 station_id,
                 station["station_name"],
+                event_id,
             )
         else:
-            result = handle_station_swipe(conn, card_id, station_id, station)
-
-        if event_id:
-            conn.execute("UPDATE swipe_events SET event_id = ? WHERE id = (SELECT MAX(id) FROM swipe_events)", (event_id,))
+            result = handle_station_swipe(
+                conn,
+                card_id,
+                station_id,
+                station,
+                event_id,
+            )
 
         conn.commit()
         conn.close()
 
-    return jsonify(result)
+    return jsonify({"ok": True, **result})
 
 
 @app.post("/api/test-swipe")
@@ -1207,15 +2056,33 @@ def test_swipe():
     if error:
         return error
 
-    data = request.get_json(silent=True) or {}
-    card_id = str(data.get("card_id", "")).strip()
-    station_id = str(data.get("station_id", "")).strip()
-    if not card_id or not station_id:
-        return jsonify({"ok": False, "error": "Choose both a card and a station"}), 400
+    data = request_json()
+    try:
+        card_id = validate_text(
+            data.get("card_id"),
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_id = validate_text(
+            data.get("station_id"),
+            "station_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+    except ValueError:
+        return jsonify({"ok": False, "error": "Choose both a card and a reader"}), 400
 
     account = account_for_token(token_from_request())
     with db_lock:
         conn = db_connect()
+        configured_station = conn.execute(
+            "SELECT id FROM stations WHERE id = ?",
+            (station_id,),
+        ).fetchone()
+        if not configured_station:
+            conn.close()
+            return jsonify({"ok": False, "error": "Reader location not found"}), 404
         station = get_station_info(conn, station_id)
         if station["station_kind"] == "door":
             result = handle_door_swipe(conn, card_id, station_id, station["station_name"])
@@ -1230,7 +2097,23 @@ def test_swipe():
 
 @app.get("/health")
 def health():
-    return jsonify({"ok": True, "time": now_iso()})
+    try:
+        with db_lock:
+            conn = db_connect()
+            conn.execute("SELECT 1").fetchone()
+            conn.close()
+    except sqlite3.Error:
+        app.logger.exception("Database health check failed")
+        return jsonify({"ok": False, "time": now_iso(), "database": "error"}), 503
+
+    return jsonify(
+        {
+            "ok": True,
+            "time": now_iso(),
+            "database": "ok",
+            "station_api_key_configured": bool(STATION_API_KEY),
+        }
+    )
 
 
 @app.get("/")
@@ -1243,8 +2126,8 @@ def dashboard():
 @app.get("/api/dashboard")
 def dashboard_data():
     limit = request.args.get("limit", "20")
-    swipe_query = request.args.get("swipe_query", "").strip()
-    swipe_station = request.args.get("swipe_station", "").strip()
+    swipe_query = request.args.get("swipe_query", "").strip()[:100]
+    swipe_station = request.args.get("swipe_station", "").strip()[:MAX_ID_LENGTH]
     swipe_warning_only = request.args.get("swipe_warning_only", "") == "1"
     account = account_for_token(token_from_request())
     role = normalize_access_role(account["role"]) if account else ""
@@ -1312,12 +2195,23 @@ def dashboard_data():
 
 @app.post("/api/access")
 def access_check():
-    data = request.get_json(silent=True) or {}
-    login = str(data.get("login", data.get("card_id", ""))).strip()
+    data = request_json()
+    login = str(data.get("login", "")).strip().lower()
     password = str(data.get("password", ""))
+
+    prune_in_memory_auth_state()
 
     if not login or not password:
         return jsonify({"ok": False, "error": "Login and password are required"}), 400
+    if len(login) > MAX_EMAIL_LENGTH or len(password) > 1024:
+        return jsonify({"ok": False, "error": "Login not recognized"}), 403
+    if login_is_rate_limited(login):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Too many failed attempts; try again in five minutes",
+            }
+        ), 429
 
     with db_lock:
         conn = db_connect()
@@ -1325,6 +2219,7 @@ def access_check():
             """
             SELECT
                 user_accounts.card_id,
+                user_accounts.username,
                 user_accounts.role,
                 user_accounts.password_hash,
                 user_accounts.active,
@@ -1332,17 +2227,19 @@ def access_check():
                 cards.email
             FROM user_accounts
             JOIN cards ON cards.card_id = user_accounts.card_id
-            WHERE user_accounts.card_id = ? OR lower(cards.email) = lower(?)
+            WHERE lower(user_accounts.username) = lower(?)
             LIMIT 1
             """,
-            (login, login),
+            (login,),
         ).fetchone()
 
         if (
             not account
             or not account["active"]
+            or not normalize_access_role(account["role"])
             or not check_password_hash(account["password_hash"], password)
         ):
+            record_login_failure(login)
             add_audit_log(
                 conn,
                 None,
@@ -1358,7 +2255,12 @@ def access_check():
         account = dict(account)
         token = secrets.token_urlsafe(32)
         role = normalize_access_role(account["role"])
-        session_tokens[token] = {"card_id": account["card_id"]}
+        clear_login_failures(login)
+        with session_lock:
+            session_tokens[token] = {
+                "card_id": account["card_id"],
+                "expires_at": time.time() + SESSION_MAX_SECONDS,
+            }
         add_audit_log(
             conn,
             account,
@@ -1376,6 +2278,7 @@ def access_check():
             "access_token": token,
             "role": role,
             "card_id": account["card_id"],
+            "username": account["username"],
             "name": account["name"],
             "email": account["email"],
         }
@@ -1392,7 +2295,8 @@ def logout():
             add_audit_log(conn, account, "logout", "account", account["card_id"])
         conn.commit()
         conn.close()
-    session_tokens.pop(token, None)
+    with session_lock:
+        session_tokens.pop(token, None)
     return jsonify({"ok": True})
 
 
@@ -1406,10 +2310,21 @@ def admin_data():
 
     with db_lock:
         conn = db_connect()
-        cards = card_rows(conn, include_accounts=(role == "admin"))
+        include_sensitive = role == "admin"
+        cards = card_rows(
+            conn,
+            include_accounts=include_sensitive,
+            include_bronco_id=include_sensitive,
+        )
+        people = people_rows(conn, include_bronco_id=include_sensitive)
         stations = station_option_rows(conn)
-        certifications = certification_rows(conn)
+        readers = reader_option_rows(conn)
+        certifications = certification_rows(
+            conn,
+            include_bronco_id=include_sensitive,
+        )
         certify_permissions = certify_permission_rows(conn) if role == "admin" else []
+        canvas_sync_tasks = canvas_sync_task_rows(conn) if role == "admin" else []
         audit_log = audit_log_rows(conn) if role == "admin" else []
         can_certify_station_ids = (
             [station["station_id"] for station in stations]
@@ -1422,9 +2337,12 @@ def admin_data():
         {
             "role": role,
             "cards": cards,
+            "people": people,
             "stations": stations,
+            "readers": readers,
             "certifications": certifications,
             "certify_permissions": certify_permissions,
+            "canvas_sync_tasks": canvas_sync_tasks,
             "audit_log": audit_log,
             "can_certify_station_ids": can_certify_station_ids,
         }
@@ -1433,12 +2351,16 @@ def admin_data():
 
 @app.get("/api/pending-cards")
 def pending_cards():
-    role, error = require_access("staff", "volunteer")
+    role, error = require_access("staff")
     if error:
         return error
 
     with db_lock:
         conn = db_connect()
+        cutoff = (
+            datetime.now(timezone.utc).replace(microsecond=0)
+            - timedelta(days=PENDING_CARD_DAYS)
+        ).isoformat()
         rows = conn.execute(
             """
             SELECT
@@ -1447,26 +2369,35 @@ def pending_cards():
                 COALESCE(
                     NULLIF(latest.station_name, ''),
                     latest.station_id
-                ) AS last_seen_station
+                ) AS last_seen_station,
+                COUNT(*) OVER () AS pending_count
             FROM swipe_events AS latest
             JOIN (
                 SELECT card_id, MAX(id) AS latest_id
                 FROM swipe_events
-                WHERE warning = 'unknown_card'
+                WHERE warning = 'unknown_card' AND timestamp >= ?
                 GROUP BY card_id
             ) AS newest
                 ON newest.latest_id = latest.id
             LEFT JOIN cards
                 ON cards.card_id = latest.card_id
+            LEFT JOIN pending_card_dismissals AS dismissals
+                ON dismissals.card_id = latest.card_id
             WHERE cards.card_id IS NULL
+              AND (
+                  dismissals.card_id IS NULL
+                  OR latest.id > dismissals.ignored_through_event_id
+              )
             ORDER BY latest.id DESC
-            LIMIT 50
-            """
+            LIMIT 100
+            """,
+            (cutoff,),
         ).fetchall()
         conn.close()
 
     return jsonify(
         {
+            "pending_count": int(rows[0]["pending_count"]) if rows else 0,
             "pending_cards": [
                 {
                     "card_id": row["card_id"],
@@ -1479,28 +2410,368 @@ def pending_cards():
     )
 
 
-@app.post("/api/cards")
-def save_card():
-    role, error = require_access("staff", "volunteer")
+@app.post("/api/import/canvas")
+def import_canvas_csv():
+    role, error = require_access("admin")
     if error:
         return error
 
     account = account_for_token(token_from_request())
-    data = request.get_json(silent=True) or {}
-    card_id = str(data.get("card_id", "")).strip()
-    name = str(data.get("name", "")).strip()
-    email = str(data.get("email", "")).strip()
-    student_id = str(data.get("student_id", "")).strip()
-    designation = normalize_designation(data.get("designation", "User"))
-    notes = str(data.get("notes", "")).strip()
+    try:
+        rows = normalized_csv_rows(csv_text_from_request())
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    if not rows:
+        return jsonify({"ok": False, "error": "CSV has no rows"}), 400
+
+    base_columns = (
+        ("Email", ("email", "email_address")),
+        ("Student", ("student", "name", "person", "full_name")),
+        ("bid", ("bid", "bronco_id", "broncoid", "bronco_number")),
+    )
+    missing_base_columns = [
+        label
+        for label, alternatives in base_columns
+        if not any(alternative in rows[0] for alternative in alternatives)
+    ]
+    if missing_base_columns:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Canvas CSV is missing required columns: "
+                + ", ".join(missing_base_columns),
+            }
+        ), 400
+
+    missing_columns = [
+        heading
+        for heading, course_id, _ in CERTIFICATION_IMPORT_COLUMNS
+        if not any(course_id in key for key in rows[0])
+    ]
+    if missing_columns:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Canvas CSV is missing certification columns",
+                "missing_columns": missing_columns,
+            }
+        ), 400
+
+    imported_rows = 0
+    people_created = 0
+    people_updated = 0
+    certification_statuses = 0
+    synced_certifications = 0
+    pending_preserved = 0
+    pending_resolved = 0
+    errors = []
+    seen_bronco_ids = {}
+
+    with db_lock:
+        conn = db_connect()
+        station_ids = {
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM stations WHERE kind = 'station'"
+            ).fetchall()
+        }
+        missing_stations = [
+            station_id
+            for _, _, station_id in CERTIFICATION_IMPORT_COLUMNS
+            if station_id not in station_ids
+        ]
+        if missing_stations:
+            conn.close()
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "Server station configuration is missing: "
+                    + ", ".join(missing_stations),
+                }
+            ), 500
+
+        timestamp = now_iso()
+        for line_number, row in enumerate(rows, start=2):
+            try:
+                bronco_id = validate_text(
+                    bronco_id_from_row(row),
+                    "bid",
+                    MAX_ID_LENGTH,
+                    required=True,
+                )
+                name = validate_text(
+                    student_name_from_row(row),
+                    "Student",
+                    MAX_NAME_LENGTH,
+                    required=True,
+                )
+                email = validate_email(
+                    row_value(row, "email", "email_address"),
+                    required=True,
+                )
+            except ValueError as error:
+                errors.append({"line": line_number, "error": str(error)})
+                continue
+
+            bronco_key = bronco_id.lower()
+            if bronco_key in seen_bronco_ids:
+                errors.append(
+                    {
+                        "line": line_number,
+                        "bronco_id": bronco_id,
+                        "error": f"duplicate bid also appears on line {seen_bronco_ids[bronco_key]}",
+                    }
+                )
+                continue
+            seen_bronco_ids[bronco_key] = line_number
+
+            existing = person_row(conn, bronco_id)
+            stored_bronco_id = existing["bronco_id"] if existing else bronco_id
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE people
+                    SET name = ?, email = ?, active = 1, updated_at = ?
+                    WHERE bronco_id = ?
+                    """,
+                    (name, email, timestamp, stored_bronco_id),
+                )
+                people_updated += 1
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO people (
+                        bronco_id, name, email, designation, active, notes, updated_at
+                    )
+                    VALUES (?, ?, ?, 'User', 1, 'Imported from Canvas', ?)
+                    """,
+                    (stored_bronco_id, name, email, timestamp),
+                )
+                people_created += 1
+
+            conn.execute(
+                """
+                UPDATE cards
+                SET name = ?, email = ?, updated_at = ?
+                WHERE bronco_id = ?
+                """,
+                (name, email, timestamp, stored_bronco_id),
+            )
+            assigned_cards = conn.execute(
+                "SELECT card_id FROM cards WHERE bronco_id = ?",
+                (stored_bronco_id,),
+            ).fetchall()
+
+            for _, course_id, station_id in CERTIFICATION_IMPORT_COLUMNS:
+                canvas_active = certification_import_value(row, course_id)
+                pending = conn.execute(
+                    """
+                    SELECT desired_active
+                    FROM canvas_sync_tasks
+                    WHERE bronco_id = ? AND station_id = ? AND status = 'pending'
+                    """,
+                    (stored_bronco_id, station_id),
+                ).fetchone()
+
+                if pending and int(pending["desired_active"]) != canvas_active:
+                    pending_preserved += 1
+                    continue
+                if pending:
+                    conn.execute(
+                        """
+                        UPDATE canvas_sync_tasks
+                        SET status = 'completed',
+                            completed_at = ?,
+                            completed_by_card_id = 'canvas-import'
+                        WHERE bronco_id = ? AND station_id = ?
+                        """,
+                        (timestamp, stored_bronco_id, station_id),
+                    )
+                    pending_resolved += 1
+
+                if canvas_active:
+                    conn.execute(
+                        """
+                        INSERT INTO bronco_certifications (
+                            bronco_id, station_id, active, notes, updated_at
+                        )
+                        VALUES (?, ?, 1, 'Imported from Canvas', ?)
+                        ON CONFLICT(bronco_id, station_id) DO UPDATE SET
+                            active = 1,
+                            notes = excluded.notes,
+                            updated_at = excluded.updated_at
+                        """,
+                        (stored_bronco_id, station_id, timestamp),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        DELETE FROM bronco_certifications
+                        WHERE bronco_id = ? AND station_id = ?
+                        """,
+                        (stored_bronco_id, station_id),
+                    )
+                    conn.execute(
+                        """
+                        DELETE FROM certifications
+                        WHERE station_id = ?
+                          AND card_id IN (
+                              SELECT card_id FROM cards WHERE bronco_id = ?
+                          )
+                        """,
+                        (station_id, stored_bronco_id),
+                    )
+                certification_statuses += 1
+
+            for card in assigned_cards:
+                synced_certifications += sync_bronco_certifications_to_card(
+                    conn, stored_bronco_id, card["card_id"], account
+                )
+            imported_rows += 1
+
+        add_audit_log(
+            conn,
+            account,
+            "canvas_database_imported",
+            "canvas",
+            "csv",
+            {
+                "rows": imported_rows,
+                "people_created": people_created,
+                "people_updated": people_updated,
+                "certification_statuses": certification_statuses,
+                "pending_preserved": pending_preserved,
+                "pending_resolved": pending_resolved,
+                "errors": len(errors),
+            },
+        )
+        conn.commit()
+        people = people_rows(conn, include_bronco_id=True)
+        certifications = certification_rows(conn, include_bronco_id=True)
+        canvas_sync_tasks = canvas_sync_task_rows(conn)
+        conn.close()
+
+    status = 200 if imported_rows else 400
+    return jsonify(
+        {
+            "ok": imported_rows > 0,
+            "imported_rows": imported_rows,
+            "people_created": people_created,
+            "people_updated": people_updated,
+            "certification_statuses": certification_statuses,
+            "synced_certifications": synced_certifications,
+            "pending_preserved": pending_preserved,
+            "pending_resolved": pending_resolved,
+            "errors": errors[:25],
+            "error_count": len(errors),
+            "people": people,
+            "certifications": certifications,
+            "canvas_sync_tasks": canvas_sync_tasks,
+        }
+    ), status
+
+
+@app.post("/api/canvas-sync-tasks/complete")
+def complete_canvas_sync_task():
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    data = request_json()
+    try:
+        bronco_id = validate_text(
+            data.get("bronco_id"),
+            "bronco_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_id = validate_text(
+            data.get("station_id"),
+            "station_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+    with db_lock:
+        conn = db_connect()
+        task = conn.execute(
+            """
+            SELECT desired_active
+            FROM canvas_sync_tasks
+            WHERE bronco_id = ? AND station_id = ? AND status = 'pending'
+            """,
+            (bronco_id, station_id),
+        ).fetchone()
+        if not task:
+            conn.close()
+            return jsonify({"ok": False, "error": "Pending Canvas task not found"}), 404
+
+        conn.execute(
+            """
+            UPDATE canvas_sync_tasks
+            SET status = 'completed', completed_at = ?, completed_by_card_id = ?
+            WHERE bronco_id = ? AND station_id = ?
+            """,
+            (now_iso(), account["card_id"], bronco_id, station_id),
+        )
+        add_audit_log(
+            conn,
+            account,
+            "canvas_sync_task_completed",
+            "canvas_certification",
+            f"{bronco_id}:{station_id}",
+            {"desired_active": bool(task["desired_active"])},
+        )
+        conn.commit()
+        tasks = canvas_sync_task_rows(conn)
+        conn.close()
+
+    return jsonify({"ok": True, "canvas_sync_tasks": tasks})
+
+
+@app.post("/api/cards")
+def save_card():
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    data = request_json()
+    try:
+        card_id = validate_text(
+            data.get("card_id"),
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        provided_bronco_id = validate_text(
+            data.get("bronco_id"),
+            "BroncoID",
+            MAX_ID_LENGTH,
+        )
+        person_ref = validate_text(
+            data.get("person_ref"),
+            "person_ref",
+            128,
+        )
+        name = validate_text(data.get("name"), "name", MAX_NAME_LENGTH)
+        email = validate_email(data.get("email"))
+        notes = validate_text(data.get("notes"), "notes", MAX_NOTES_LENGTH)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+    designation_value = str(data.get("designation", "User") or "User").strip()
+    if designation_value.lower() not in ("staff", "volunteer", "user"):
+        return jsonify({"ok": False, "error": "designation is invalid"}), 400
+    designation = normalize_designation(designation_value)
     active = 1 if parse_bool(data.get("active", True)) else 0
     account_fields_present = any(
         key in data
         for key in ("login_role", "login_password", "login_active")
     )
-
-    if not card_id:
-        return jsonify({"ok": False, "error": "card_id is required"}), 400
 
     if account_fields_present and role != "admin":
         return jsonify(
@@ -1513,62 +2784,326 @@ def save_card():
     with db_lock:
         conn = db_connect()
         existing_card = card_row(conn, card_id)
+        target_account = conn.execute(
+            """
+            SELECT card_id, username, role, password_hash, active
+            FROM user_accounts
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+
+        if target_account and role != "admin":
+            actor_level = ROLE_LEVELS.get(role, 0)
+            target_level = ROLE_LEVELS.get(
+                normalize_access_role(target_account["role"]),
+                0,
+            )
+            if target_level > actor_level:
+                conn.close()
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "You cannot edit a higher-access account's card",
+                    }
+                ), 403
+
+        linked_person = person_row_from_ref(conn, person_ref) if person_ref else None
+
+        if person_ref and not linked_person:
+            conn.close()
+            return jsonify(
+                {"ok": False, "error": "Imported person selection expired; select the person again"}
+            ), 400
+
+        if existing_card:
+            bronco_id = existing_card["bronco_id"]
+            if bronco_id:
+                if (
+                    linked_person
+                    and linked_person["bronco_id"].lower() != bronco_id.lower()
+                ):
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "A saved card cannot be reassigned to another person",
+                        }
+                    ), 409
+                if (
+                    provided_bronco_id
+                    and provided_bronco_id.lower() != bronco_id.lower()
+                ):
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "A saved card's BroncoID cannot be changed",
+                        }
+                    ), 409
+                linked_person = person_row(conn, bronco_id)
+            else:
+                if role != "admin":
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "Admin login required to repair this legacy card",
+                        }
+                    ), 403
+                if linked_person:
+                    bronco_id = linked_person["bronco_id"]
+                elif provided_bronco_id:
+                    linked_person = person_row(conn, provided_bronco_id)
+                    bronco_id = (
+                        linked_person["bronco_id"]
+                        if linked_person
+                        else provided_bronco_id
+                    )
+                else:
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "Assign an imported person or enter a BroncoID to repair this legacy card",
+                        }
+                    ), 400
+        elif linked_person:
+            bronco_id = linked_person["bronco_id"]
+            if provided_bronco_id and provided_bronco_id.lower() != bronco_id.lower():
+                conn.close()
+                return jsonify(
+                    {"ok": False, "error": "BroncoID does not match the imported person"}
+                ), 400
+        elif provided_bronco_id:
+            if person_row(conn, provided_bronco_id):
+                conn.close()
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "This person is already imported; select them using Assign Person",
+                    }
+                ), 409
+            bronco_id = provided_bronco_id
+        else:
+            conn.close()
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "BroncoID is required unless an imported person is selected",
+                }
+            ), 400
+
+        duplicate_card = conn.execute(
+            """
+            SELECT card_id
+            FROM cards
+            WHERE lower(bronco_id) = lower(?) AND card_id != ?
+            LIMIT 1
+            """,
+            (bronco_id, card_id),
+        ).fetchone()
+        if duplicate_card:
+            conn.close()
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": f"This person is already assigned to card {duplicate_card['card_id']}",
+                }
+            ), 409
+
+        if linked_person:
+            if not existing_card:
+                name = linked_person["name"]
+                email = linked_person["email"]
+                designation = normalize_designation(linked_person["designation"])
+                notes = notes or linked_person["notes"]
+                active = 1 if linked_person["active"] else 0
+
+        if not name:
+            conn.close()
+            return jsonify({"ok": False, "error": "name is required"}), 400
+
+        if role == "volunteer" and designation == "Staff":
+            conn.close()
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "Volunteers cannot designate cards as Staff",
+                }
+            ), 403
+
+        if (
+            role == "volunteer"
+            and existing_card
+            and normalize_designation(existing_card["designation"]) == "Staff"
+        ):
+            conn.close()
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "Volunteers cannot edit Staff cards",
+                }
+            ), 403
+
+        created_person = False
+        if not linked_person:
+            timestamp = now_iso()
+            conn.execute(
+                """
+                INSERT INTO people (
+                    bronco_id, name, email, designation, active, notes, updated_at
+                )
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                (bronco_id, name, email, designation, notes, timestamp),
+            )
+            linked_person = person_row(conn, bronco_id)
+            created_person = True
+        else:
+            conn.execute(
+                """
+                UPDATE people
+                SET
+                    name = ?,
+                    email = ?,
+                    designation = ?,
+                    notes = ?,
+                    updated_at = ?
+                WHERE bronco_id = ?
+                """,
+                (
+                    name,
+                    email,
+                    designation,
+                    notes,
+                    now_iso(),
+                    bronco_id,
+                ),
+            )
+
         conn.execute(
             """
             INSERT INTO cards (
-                card_id, name, email, student_id, designation, active, notes, updated_at
+                card_id, bronco_id, name, email, designation, active, notes, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(card_id) DO UPDATE SET
+                bronco_id = excluded.bronco_id,
                 name = excluded.name,
                 email = excluded.email,
-                student_id = excluded.student_id,
                 designation = excluded.designation,
                 active = excluded.active,
                 notes = excluded.notes,
                 updated_at = excluded.updated_at
             """,
-            (card_id, name, email, student_id, designation, active, notes, now_iso()),
+            (card_id, bronco_id, name, email, designation, active, notes, now_iso()),
         )
 
+        synced_certifications = sync_bronco_certifications_to_card(
+            conn, bronco_id, card_id, account
+        )
+        conn.execute(
+            "DELETE FROM pending_card_dismissals WHERE card_id = ?",
+            (card_id,),
+        )
+
+        login_role = normalize_access_role(target_account["role"]) if target_account else ""
+        login_active = bool(target_account["active"]) if target_account else False
+        password_changed = False
         if account_fields_present:
-            login_role = normalize_access_role(data.get("login_role", ""))
+            raw_login_role = str(data.get("login_role", "") or "").strip()
+            login_role = normalize_access_role(raw_login_role)
             login_password = str(data.get("login_password", ""))
             login_active = 1 if parse_bool(data.get("login_active", True)) else 0
 
+            if raw_login_role and not login_role:
+                conn.close()
+                return jsonify({"ok": False, "error": "login role is invalid"}), 400
+            if len(login_password) > 1024:
+                conn.close()
+                return jsonify(
+                    {"ok": False, "error": "password is too long"}
+                ), 400
+            if account and account["card_id"] == card_id and (
+                login_role != "admin" or not login_active
+            ):
+                conn.close()
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "You cannot remove, demote, or disable the account you are signed in with",
+                    }
+                ), 409
+
             if not login_role:
+                conn.execute(
+                    "DELETE FROM certify_permissions WHERE card_id = ?",
+                    (card_id,),
+                )
                 conn.execute("DELETE FROM user_accounts WHERE card_id = ?", (card_id,))
             else:
-                existing = conn.execute(
-                    """
-                    SELECT password_hash
-                    FROM user_accounts
-                    WHERE card_id = ?
-                    """,
-                    (card_id,),
-                ).fetchone()
-
-                if not login_password and not existing:
+                login_username = login_username_from_email(email)
+                if not login_username and target_account:
+                    login_username = target_account["username"]
+                if not login_username:
                     conn.close()
                     return jsonify(
                         {
                             "ok": False,
-                            "error": "Password is required for a new login",
+                            "error": "An email address is required to create a BroncoName login",
+                        }
+                    ), 400
+                duplicate = conn.execute(
+                    """
+                    SELECT card_id
+                    FROM user_accounts
+                    WHERE lower(username) = lower(?) AND card_id != ?
+                    """,
+                    (login_username, card_id),
+                ).fetchone()
+                if duplicate:
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": f"Login username '{login_username}' is already used",
+                        }
+                    ), 400
+
+                if not login_password and not target_account:
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "Password is required when creating a dashboard login",
+                        }
+                    ), 400
+                if login_password and (
+                    len(login_password) < 8 or not login_password.strip()
+                ):
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "Password must be at least 8 characters",
                         }
                     ), 400
 
                 password_hash = (
                     generate_password_hash(login_password)
                     if login_password
-                    else existing["password_hash"]
+                    else target_account["password_hash"]
                 )
+                password_changed = bool(login_password)
                 conn.execute(
                     """
                     INSERT INTO user_accounts (
-                        card_id, role, password_hash, active, updated_at
+                        card_id, username, role, password_hash, active, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(card_id) DO UPDATE SET
+                        username = excluded.username,
                         role = excluded.role,
                         password_hash = excluded.password_hash,
                         active = excluded.active,
@@ -1576,12 +3111,18 @@ def save_card():
                     """,
                     (
                         card_id,
+                        login_username,
                         role_label(login_role),
                         password_hash,
                         login_active,
                         now_iso(),
                     ),
                 )
+                if login_role == "admin":
+                    conn.execute(
+                        "DELETE FROM certify_permissions WHERE card_id = ?",
+                        (card_id,),
+                    )
 
         add_audit_log(
             conn,
@@ -1590,21 +3131,52 @@ def save_card():
             "card",
             card_id,
             {
+                "bronco_id": bronco_id,
                 "name": name,
                 "email": email,
-                "student_id": student_id,
                 "designation": designation,
                 "active": bool(active),
+                "person_created": created_person,
+                "selected_from_import": bool(person_ref),
                 "login_fields_changed": account_fields_present,
+                "login_role": role_label(login_role),
+                "login_active": bool(login_active),
+                "password_changed": password_changed,
+                "synced_bronco_certifications": synced_certifications,
             },
         )
 
         conn.commit()
-        cards = card_rows(conn, include_accounts=(role == "admin"))
+        if account_fields_present:
+            invalidate_sessions_for_card(
+                card_id,
+                except_token=(
+                    token_from_request()
+                    if account and account["card_id"] == card_id
+                    else ""
+                ),
+            )
+        include_sensitive = role == "admin"
+        cards = card_rows(
+            conn,
+            include_accounts=include_sensitive,
+            include_bronco_id=include_sensitive,
+        )
+        certifications = certification_rows(
+            conn,
+            include_bronco_id=include_sensitive,
+        )
+        people = people_rows(conn, include_bronco_id=include_sensitive)
         conn.close()
 
-    return jsonify({"ok": True, "cards": cards})
-
+    return jsonify(
+        {
+            "ok": True,
+            "cards": cards,
+            "certifications": certifications,
+            "people": people,
+        }
+    )
 
 @app.delete("/api/cards/<card_id>")
 def delete_card(card_id):
@@ -1613,10 +3185,15 @@ def delete_card(card_id):
         return error
 
     account = account_for_token(token_from_request())
-    card_id = str(card_id or "").strip()
-
-    if not card_id:
-        return jsonify({"ok": False, "error": "card_id is required"}), 400
+    try:
+        card_id = validate_text(
+            card_id,
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
 
     with db_lock:
         conn = db_connect()
@@ -1624,6 +3201,15 @@ def delete_card(card_id):
         if not existing:
             conn.close()
             return jsonify({"ok": False, "error": "Card not found"}), 404
+
+        if account and account.get("card_id") == card_id:
+            conn.close()
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "You cannot delete the card for the account you are currently signed in with",
+                }
+            ), 409
 
         related_counts = {
             "active_sessions": conn.execute(
@@ -1654,10 +3240,28 @@ def delete_card(card_id):
         conn.execute("DELETE FROM certify_permissions WHERE card_id = ?", (card_id,))
         conn.execute("DELETE FROM user_accounts WHERE card_id = ?", (card_id,))
         conn.execute("DELETE FROM cards WHERE card_id = ?", (card_id,))
+        conn.execute(
+            "UPDATE canvas_sync_tasks SET card_id = '' WHERE card_id = ?",
+            (card_id,),
+        )
+        latest_event_id = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS id FROM swipe_events WHERE card_id = ?",
+            (card_id,),
+        ).fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO pending_card_dismissals (
+                card_id, ignored_through, ignored_through_event_id
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(card_id) DO UPDATE SET
+                ignored_through = excluded.ignored_through,
+                ignored_through_event_id = excluded.ignored_through_event_id
+            """,
+            (card_id, now_iso(), latest_event_id),
+        )
 
-        for token, session in list(session_tokens.items()):
-            if session.get("card_id") == card_id:
-                session_tokens.pop(token, None)
+        invalidate_sessions_for_card(card_id)
 
         for station_id, mode in list(cert_modes.items()):
             if mode.get("grantor_card_id") == card_id:
@@ -1672,7 +3276,7 @@ def delete_card(card_id):
             {
                 "name": existing["name"],
                 "email": existing["email"],
-                "student_id": existing["student_id"],
+                "bronco_id": existing["bronco_id"],
                 "designation": existing["designation"],
                 "swipe_events_preserved": True,
                 **related_counts,
@@ -1680,8 +3284,13 @@ def delete_card(card_id):
         )
 
         conn.commit()
-        cards = card_rows(conn, include_accounts=True)
-        certifications = certification_rows(conn)
+        cards = card_rows(
+            conn,
+            include_accounts=True,
+            include_bronco_id=True,
+        )
+        certifications = certification_rows(conn, include_bronco_id=True)
+        people = people_rows(conn, include_bronco_id=True)
         certify_permissions = certify_permission_rows(conn)
         audit_log = audit_log_rows(conn)
         conn.close()
@@ -1690,6 +3299,7 @@ def delete_card(card_id):
         {
             "ok": True,
             "cards": cards,
+            "people": people,
             "certifications": certifications,
             "certify_permissions": certify_permissions,
             "audit_log": audit_log,
@@ -1704,11 +3314,16 @@ def save_station_rules():
         return error
 
     account = account_for_token(token_from_request())
-    data = request.get_json(silent=True) or {}
-    station_id = str(data.get("station_id", "")).strip()
-
-    if not station_id:
-        return jsonify({"ok": False, "error": "station_id is required"}), 400
+    data = request_json()
+    try:
+        station_id = validate_text(
+            data.get("station_id"),
+            "station_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
 
     with db_lock:
         conn = db_connect()
@@ -1717,6 +3332,7 @@ def save_station_rules():
             SELECT
                 id,
                 kind,
+                dashboard_visible,
                 requires_certification,
                 cert_override_active,
                 cert_override_by,
@@ -1732,11 +3348,20 @@ def save_station_rules():
             conn.close()
             return jsonify({"ok": False, "error": "station_id must be a station"}), 400
 
+        dashboard_visible = station["dashboard_visible"]
         requires_certification = station["requires_certification"]
         override_active = station["cert_override_active"]
         override_by = station["cert_override_by"] or ""
         override_updated_at = station["cert_override_updated_at"] or ""
         override_expires_at = station["cert_override_expires_at"] or ""
+
+        if "dashboard_visible" in data:
+            if role != "admin":
+                conn.close()
+                return jsonify(
+                    {"ok": False, "error": "Admin login required to change dashboard visibility"}
+                ), 403
+            dashboard_visible = 1 if parse_bool(data.get("dashboard_visible")) else 0
 
         if "requires_certification" in data:
             requires_certification = (
@@ -1746,6 +3371,14 @@ def save_station_rules():
         if "cert_override_active" in data:
             override_updated_at = now_iso()
             if parse_bool(data.get("cert_override_active")):
+                if not requires_certification:
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "Certification must be required before enabling an override",
+                        }
+                    ), 400
                 try:
                     duration_minutes = int(
                         data.get("cert_override_duration_minutes", 30)
@@ -1759,7 +3392,14 @@ def save_station_rules():
                         }
                     ), 400
 
-                duration_minutes = max(1, min(duration_minutes, 1440))
+                if duration_minutes < 1 or duration_minutes > 1440:
+                    conn.close()
+                    return jsonify(
+                        {
+                            "ok": False,
+                            "error": "Override duration must be between 1 and 1440 minutes",
+                        }
+                    ), 400
                 expires_at = datetime.now(timezone.utc).replace(
                     microsecond=0
                 ) + timedelta(minutes=duration_minutes)
@@ -1771,10 +3411,17 @@ def save_station_rules():
                 override_by = ""
                 override_expires_at = ""
 
+        if not requires_certification:
+            override_active = 0
+            override_by = ""
+            override_expires_at = ""
+            cert_modes.pop(station_id, None)
+
         conn.execute(
             """
             UPDATE stations
             SET
+                dashboard_visible = ?,
                 requires_certification = ?,
                 cert_override_active = ?,
                 cert_override_by = ?,
@@ -1783,6 +3430,7 @@ def save_station_rules():
             WHERE id = ?
             """,
             (
+                dashboard_visible,
                 requires_certification,
                 override_active,
                 override_by,
@@ -1798,6 +3446,7 @@ def save_station_rules():
             "station",
             station_id,
             {
+                "dashboard_visible": bool(dashboard_visible),
                 "requires_certification": bool(requires_certification),
                 "cert_override_active": bool(override_active),
                 "cert_override_by": override_by,
@@ -1818,17 +3467,28 @@ def save_certify_permissions():
         return error
 
     actor = account_for_token(token_from_request())
-    data = request.get_json(silent=True) or {}
-    card_id = str(data.get("card_id", "")).strip()
-    station_ids = [
-        str(item).strip()
-        for item in data.get("station_ids", [])
-        if str(item).strip()
-    ]
-    station_ids = list(dict.fromkeys(station_ids))
+    data = request_json()
+    try:
+        card_id = validate_text(
+            data.get("card_id"),
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
 
-    if not card_id:
-        return jsonify({"ok": False, "error": "card_id is required"}), 400
+    raw_station_ids = data.get("station_ids", [])
+    if not isinstance(raw_station_ids, list):
+        return jsonify({"ok": False, "error": "station_ids must be a list"}), 400
+    try:
+        station_ids = [
+            validate_text(item, "station_id", MAX_ID_LENGTH, required=True)
+            for item in raw_station_ids
+        ]
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    station_ids = list(dict.fromkeys(station_ids))
 
     with db_lock:
         conn = db_connect()
@@ -1905,14 +3565,24 @@ def save_certification():
         return error
 
     account = account_for_token(token_from_request())
-    data = request.get_json(silent=True) or {}
-    card_id = str(data.get("card_id", "")).strip()
-    station_id = str(data.get("station_id", "")).strip()
+    data = request_json()
+    try:
+        card_id = validate_text(
+            data.get("card_id"),
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_id = validate_text(
+            data.get("station_id"),
+            "station_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        notes = validate_text(data.get("notes"), "notes", MAX_NOTES_LENGTH)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
     active = 1 if parse_bool(data.get("active", True)) else 0
-    notes = str(data.get("notes", "")).strip()
-
-    if not card_id or not station_id:
-        return jsonify({"ok": False, "error": "card_id and station_id are required"}), 400
 
     with db_lock:
         conn = db_connect()
@@ -1983,6 +3653,21 @@ def save_certification():
             """,
             (card_id, station_id, active, notes, timestamp, granted_by, timestamp),
         )
+        if card["bronco_id"]:
+            conn.execute(
+                """
+                INSERT INTO bronco_certifications (
+                    bronco_id, station_id, active, notes, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(bronco_id, station_id) DO UPDATE SET
+                    active = excluded.active,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+                """,
+                (card["bronco_id"], station_id, active, notes, timestamp),
+            )
+            queue_canvas_sync_task(conn, card, station_id, bool(active), account)
         add_audit_log(
             conn,
             account,
@@ -1997,7 +3682,10 @@ def save_certification():
             },
         )
         conn.commit()
-        certifications = certification_rows(conn)
+        certifications = certification_rows(
+            conn,
+            include_bronco_id=(role == "admin"),
+        )
         conn.close()
 
     return jsonify({"ok": True, "certifications": certifications})
@@ -2005,26 +3693,32 @@ def save_certification():
 
 @app.get("/status")
 def status():
+    account = account_for_token(token_from_request())
+    role = normalize_access_role(account["role"]) if account else ""
+    include_people = role in ("admin", "staff")
     with db_lock:
         conn = db_connect()
         rows = station_status_rows(conn)
         conn.close()
+    if not include_people:
+        rows = [{**row, "active_cards": ""} for row in rows]
     return jsonify(rows)
 
 
-def card_rows(conn, include_accounts=False):
+def card_rows(conn, include_accounts=False, include_bronco_id=False):
     if include_accounts:
         rows = conn.execute(
             """
             SELECT
                 cards.card_id,
+                cards.bronco_id,
                 cards.name,
                 cards.email,
-                cards.student_id,
                 cards.designation,
                 cards.active,
                 cards.notes,
                 cards.updated_at,
+                user_accounts.username AS login_username,
                 user_accounts.role AS login_role,
                 user_accounts.active AS login_active,
                 user_accounts.card_id AS login_card_id
@@ -2040,7 +3734,7 @@ def card_rows(conn, include_accounts=False):
     else:
         rows = conn.execute(
             """
-            SELECT card_id, name, email, student_id, designation, active, notes, updated_at
+            SELECT card_id, bronco_id, name, email, designation, active, notes, updated_at
             FROM cards
             ORDER BY
                 CASE WHEN name = '' THEN 1 ELSE 0 END,
@@ -2053,9 +3747,9 @@ def card_rows(conn, include_accounts=False):
     for row in rows:
         card = {
             "card_id": row["card_id"],
+            "person_ref": person_ref_for_bronco_id(row["bronco_id"]),
             "name": row["name"],
             "email": row["email"],
-            "student_id": row["student_id"],
             "designation": row["designation"],
             "active": bool(row["active"]),
             "notes": row["notes"],
@@ -2063,8 +3757,12 @@ def card_rows(conn, include_accounts=False):
             "display_name": card_display(row, row["card_id"]),
         }
 
+        if include_bronco_id:
+            card["bronco_id"] = row["bronco_id"]
+
         if include_accounts:
             card["has_login"] = bool(row["login_card_id"])
+            card["login_username"] = row["login_username"] or ""
             card["login_role"] = row["login_role"] or ""
             card["login_active"] = (
                 bool(row["login_active"])
@@ -2075,7 +3773,6 @@ def card_rows(conn, include_accounts=False):
         result.append(card)
 
     return result
-
 
 def audit_log_rows(conn, limit=80):
     rows = conn.execute(
@@ -2127,6 +3824,7 @@ def station_option_rows(conn):
         SELECT
             id AS station_id,
             name AS station_name,
+            dashboard_visible,
             requires_certification,
             cert_override_active,
             cert_override_by,
@@ -2141,6 +3839,7 @@ def station_option_rows(conn):
         {
             "station_id": row["station_id"],
             "station_name": row["station_name"],
+            "dashboard_visible": bool(row["dashboard_visible"]),
             "requires_certification": bool(row["requires_certification"]),
             "cert_override_active": override_is_effective(row),
             "cert_override_by": row["cert_override_by"] or "",
@@ -2151,14 +3850,27 @@ def station_option_rows(conn):
     ]
 
 
-def certification_rows(conn):
+def reader_option_rows(conn):
+    rows = conn.execute(
+        """
+        SELECT id AS station_id, name AS station_name, kind AS station_kind
+        FROM stations
+        ORDER BY
+            CASE WHEN kind = 'door' THEN 0 ELSE 1 END,
+            name
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def certification_rows(conn, include_bronco_id=False):
     rows = conn.execute(
         """
         SELECT
             certifications.card_id,
+            cards.bronco_id,
             cards.name,
             cards.email,
-            cards.student_id,
             cards.designation,
             certifications.station_id,
             stations.name AS station_name,
@@ -2175,12 +3887,13 @@ def certification_rows(conn):
         """
     ).fetchall()
 
-    return [
-        {
+    result = []
+    for row in rows:
+        certification = {
             "card_id": row["card_id"],
+            "person_ref": person_ref_for_bronco_id(row["bronco_id"]),
             "name": row["name"],
             "email": row["email"],
-            "student_id": row["student_id"],
             "designation": row["designation"],
             "display_name": card_display(row, row["card_id"]),
             "station_id": row["station_id"],
@@ -2192,9 +3905,11 @@ def certification_rows(conn):
             "granted_by": row["granted_by"],
             "granted_at": row["granted_at"],
         }
-        for row in rows
-    ]
+        if include_bronco_id:
+            certification["bronco_id"] = row["bronco_id"]
+        result.append(certification)
 
+    return result
 
 def active_people_rows(conn):
     current_time = datetime.now(timezone.utc)
@@ -2216,7 +3931,6 @@ def active_people_rows(conn):
 
     result = []
     for row in rows:
-        entered_at = parse_iso(row["entered_at"])
         result.append(
             {
                 "card_id": row["card_id"],
@@ -2227,7 +3941,7 @@ def active_people_rows(conn):
                 "entered_at": row["entered_at"],
                 "entry_door_id": row["entry_door_id"],
                 "entry_door_name": row["entry_door_name"],
-                "elapsed_seconds": int((current_time - entered_at).total_seconds()),
+                "elapsed_seconds": elapsed_seconds(row["entered_at"], current_time),
             }
         )
 
@@ -2251,8 +3965,9 @@ def station_status_rows(conn):
         LEFT JOIN cards
             ON cards.card_id = active_sessions.card_id
         WHERE stations.kind = 'station'
+          AND stations.dashboard_visible = 1
         GROUP BY stations.id, stations.name
-        ORDER BY stations.id
+        ORDER BY stations.name
         """
     ).fetchall()
 
@@ -2287,7 +4002,6 @@ def active_session_rows(conn):
 
     result = []
     for row in rows:
-        started_at = parse_iso(row["started_at"])
         result.append(
             {
                 "card_id": row["card_id"],
@@ -2298,7 +4012,7 @@ def active_session_rows(conn):
                 "station_id": row["station_id"],
                 "station_name": row["station_name"],
                 "started_at": row["started_at"],
-                "elapsed_seconds": int((current_time - started_at).total_seconds()),
+                "elapsed_seconds": elapsed_seconds(row["started_at"], current_time),
             }
         )
 
@@ -2393,15 +4107,28 @@ def warning_rows(conn, limit):
 
 
 def csv_reply(filename, headers, rows):
+    def safe_cell(value):
+        if not isinstance(value, str):
+            return value
+        if value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+            return "'" + value
+        return value
+
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=headers, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows(
+        {
+            key: safe_cell(value)
+            for key, value in dict(row).items()
+        }
+        for row in rows
+    )
 
     return Response(
-        output.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"inline; filename={filename}"},
+        "\ufeff" + output.getvalue(),
+        content_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -2411,8 +4138,11 @@ def swipes_csv():
     if error:
         return error
 
+    account = account_for_token(token_from_request())
     with db_lock:
         conn = db_connect()
+        add_audit_log(conn, account, "swipe_log_exported", "export", "swipes.csv")
+        conn.commit()
         rows = conn.execute(
             """
             SELECT
@@ -2429,7 +4159,8 @@ def swipes_csv():
                 swipe_events.duration_seconds,
                 swipe_events.active_users,
                 swipe_events.warning,
-                swipe_events.details
+                swipe_events.details,
+                swipe_events.event_id
             FROM swipe_events
             LEFT JOIN cards ON cards.card_id = swipe_events.card_id
             ORDER BY id
@@ -2452,8 +4183,44 @@ def swipes_csv():
         "active_users",
         "warning",
         "details",
+        "event_id",
     ]
     return csv_reply("swipes.csv", headers, [dict(row) for row in rows])
+
+
+@app.get("/cards.csv")
+def cards_csv():
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    include_sensitive = role == "admin"
+    with db_lock:
+        conn = db_connect()
+        add_audit_log(conn, account, "card_database_exported", "export", "cards.csv")
+        conn.commit()
+        rows = card_rows(
+            conn,
+            include_accounts=include_sensitive,
+            include_bronco_id=include_sensitive,
+        )
+        conn.close()
+
+    headers = [
+        "card_id",
+        "name",
+        "email",
+        "designation",
+        "active",
+        "notes",
+        "updated_at",
+    ]
+    if include_sensitive:
+        headers[1:1] = ["bronco_id"]
+        headers.extend(["login_username", "login_role", "login_active"])
+
+    return csv_reply("cards.csv", headers, rows)
 
 
 @app.get("/audit.csv")
@@ -2462,8 +4229,11 @@ def audit_csv():
     if error:
         return error
 
+    account = account_for_token(token_from_request())
     with db_lock:
         conn = db_connect()
+        add_audit_log(conn, account, "audit_log_exported", "export", "audit.csv")
+        conn.commit()
         rows = conn.execute(
             """
             SELECT
@@ -2496,8 +4266,15 @@ def audit_csv():
 
 @app.get("/active.csv")
 def active_csv():
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
     with db_lock:
         conn = db_connect()
+        add_audit_log(conn, account, "active_people_exported", "export", "active.csv")
+        conn.commit()
         rows = active_people_rows(conn)
         conn.close()
 
@@ -2517,10 +4294,16 @@ def active_csv():
 
 @app.get("/station_status.csv")
 def station_status_csv():
+    account = account_for_token(token_from_request())
+    role = normalize_access_role(account["role"]) if account else ""
+    include_people = role in ("admin", "staff")
     with db_lock:
         conn = db_connect()
         rows = station_status_rows(conn)
         conn.close()
+
+    if not include_people:
+        rows = [{**row, "active_cards": ""} for row in rows]
 
     headers = ["station_id", "station_name", "active_sessions", "active_cards"]
     return csv_reply("station_status.csv", headers, rows)
