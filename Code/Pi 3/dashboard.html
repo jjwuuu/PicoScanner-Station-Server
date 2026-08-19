@@ -449,6 +449,39 @@
       font-size: 13px;
     }
 
+    .analytics-status {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 12px;
+      line-height: 1.4;
+    }
+
+    .analytics-status span {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      white-space: nowrap;
+    }
+
+    .analytics-status span + span::before {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--muted);
+      content: "";
+    }
+
+    .analytics-status .space-state.open {
+      color: var(--green);
+      font-weight: 800;
+    }
+
+    .analytics-status .space-state.closed {
+      color: var(--amber);
+      font-weight: 800;
+    }
+
     .analytics-controls {
       display: flex;
       align-items: flex-end;
@@ -521,6 +554,18 @@
 
     #analytics-stations-body {
       white-space: nowrap;
+    }
+
+    #analytics-stations-body td:first-child,
+    #analytics-panel thead th:first-child {
+      min-width: 180px;
+      text-align: left;
+    }
+
+    #analytics-stations-body td:not(:first-child),
+    #analytics-panel thead th:not(:first-child) {
+      min-width: 96px;
+      text-align: right;
     }
 
     #analytics-panel .table-scroll table {
@@ -1750,9 +1795,9 @@
 
     <section id="tab-admin" class="tab-panel" role="tabpanel">
       <section class="grid">
-        <section id="canvas-import-panel" class="panel full-row hidden">
+        <section id="canvas-import-panel" class="panel hidden">
           <h2>Canvas Database Import</h2>
-          <p class="panel-note">Upload the Canvas CSV containing Email, Student, bid, and the nine certification columns. A value of 1 means certified; a blank cell means not certified. Pending local changes are preserved until Canvas reflects them.</p>
+          <p class="panel-note">Upload a Canvas CSV with Email, Student, bid, and the nine certification columns. Use 1 for certified and leave blank for not certified. Pending local changes are preserved.</p>
           <div class="form-grid single-column">
             <div>
               <label for="canvas-import-file">Canvas CSV</label>
@@ -1769,7 +1814,7 @@
           <div class="analytics-header">
             <div>
               <h2>Usage Analytics</h2>
-              <p id="analytics-status">Loading usage data...</p>
+              <p id="analytics-status" class="analytics-status">Loading usage data...</p>
             </div>
             <div class="analytics-controls">
               <div>
@@ -3789,13 +3834,19 @@
       analyticsVisitorEntries.textContent = Number(summary.visitor_entries || 0).toLocaleString();
       analyticsTopStation.textContent = summary.busiest_station || "--";
       analyticsBusiestHour.textContent = summary.busiest_hour || "--";
-      analyticsStatus.textContent = [
-        analytics.period_label,
-        `Open hours ${analytics.opening_hours}`,
-        analytics.space_open_now ? "Open now" : "After hours",
-        analytics.timezone,
-        `Updated ${formatDateTime(analytics.generated_at)}`
-      ].join(" | ");
+      const analyticsStatusItems = [
+        { text: analytics.period_label },
+        { text: `Hours ${analytics.opening_hours}` },
+        {
+          text: analytics.space_open_now ? "Open now" : "Closed now",
+          className: `space-state ${analytics.space_open_now ? "open" : "closed"}`
+        },
+        { text: String(analytics.timezone || "").replaceAll("_", " ") },
+        { text: `Updated ${formatDateTime(analytics.generated_at)}` }
+      ];
+      analyticsStatus.innerHTML = analyticsStatusItems
+        .map(item => `<span class="${item.className || ""}">${escapeHtml(item.text)}</span>`)
+        .join("");
 
       const stations = analytics.station_usage || [];
       renderBarChart(
