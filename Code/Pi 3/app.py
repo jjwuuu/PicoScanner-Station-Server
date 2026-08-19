@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import hmac
+import ipaddress
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, Response, jsonify, request
@@ -65,8 +67,16 @@ ROLE_LEVELS = {"volunteer": 1, "staff": 2, "admin": 3}
 CERT_CONFIRM_SECONDS = 4
 CERT_MODE_SECONDS = 40
 SESSION_MAX_SECONDS = 12 * 60 * 60
-LOGIN_ATTEMPT_WINDOW_SECONDS = 5 * 60
-LOGIN_ATTEMPT_LIMIT = 5
+SESSION_LIMIT_PER_ACCOUNT = 3
+LOGIN_PAIR_WINDOW_SECONDS = 5 * 60
+LOGIN_PAIR_ATTEMPT_LIMIT = 5
+LOGIN_ACCOUNT_WINDOW_SECONDS = 15 * 60
+LOGIN_ACCOUNT_ATTEMPT_LIMIT = 8
+LOGIN_IP_WINDOW_SECONDS = 10 * 60
+LOGIN_IP_ATTEMPT_LIMIT = 20
+LOGIN_TRACKING_MAX_KEYS = 5000
+SECURITY_AUDIT_COOLDOWN_SECONDS = 60
+MAX_LOGIN_BODY_BYTES = 4096
 PENDING_CARD_DAYS = 30
 MAX_CSV_BYTES = 10 * 1024 * 1024
 MAX_ID_LENGTH = 128
@@ -80,7 +90,9 @@ db_lock = threading.RLock()
 session_lock = threading.RLock()
 session_tokens = {}
 login_attempts = {}
+security_audit_cooldowns = {}
 cert_modes = {}
+DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
 
 
 def now_iso():
@@ -287,49 +299,134 @@ def invalidate_sessions_for_card(card_id, except_token=""):
                 session_tokens.pop(token, None)
 
 
-def login_attempt_key(login):
-    return (request.remote_addr or "unknown", str(login or "").strip().lower())
+def client_ip_address():
+    remote_address = request.remote_addr or "unknown"
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if remote_address in ("127.0.0.1", "::1") and forwarded_for:
+        candidate = forwarded_for.split(",", 1)[0].strip()
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            pass
+    try:
+        return str(ipaddress.ip_address(remote_address))
+    except ValueError:
+        return "unknown"
 
 
-def login_is_rate_limited(login):
-    key = login_attempt_key(login)
-    cutoff = time.time() - LOGIN_ATTEMPT_WINDOW_SECONDS
+def login_attempt_scopes(login):
+    client_ip = client_ip_address()
+    normalized_login = str(login or "").strip().lower()
+    return {
+        "pair": ("pair", client_ip, normalized_login),
+        "account": ("account", normalized_login),
+        "ip": ("ip", client_ip),
+    }
+
+
+def login_limit_rules():
+    return {
+        "pair": (LOGIN_PAIR_ATTEMPT_LIMIT, LOGIN_PAIR_WINDOW_SECONDS),
+        "account": (LOGIN_ACCOUNT_ATTEMPT_LIMIT, LOGIN_ACCOUNT_WINDOW_SECONDS),
+        "ip": (LOGIN_IP_ATTEMPT_LIMIT, LOGIN_IP_WINDOW_SECONDS),
+    }
+
+
+def recent_login_attempts(key, window_seconds, current_time):
+    cutoff = current_time - window_seconds
+    attempts = [stamp for stamp in login_attempts.get(key, []) if stamp > cutoff]
+    if attempts:
+        login_attempts[key] = attempts
+    else:
+        login_attempts.pop(key, None)
+    return attempts
+
+
+def login_retry_after(login):
+    current_time = time.time()
+    longest_retry = 0
+    scopes = login_attempt_scopes(login)
     with session_lock:
-        attempts = [stamp for stamp in login_attempts.get(key, []) if stamp > cutoff]
-        if attempts:
-            login_attempts[key] = attempts
-        else:
-            login_attempts.pop(key, None)
-        return len(attempts) >= LOGIN_ATTEMPT_LIMIT
+        for scope_name, (limit, window_seconds) in login_limit_rules().items():
+            attempts = recent_login_attempts(
+                scopes[scope_name],
+                window_seconds,
+                current_time,
+            )
+            if len(attempts) >= limit:
+                retry_after = int(attempts[0] + window_seconds - current_time) + 1
+                longest_retry = max(longest_retry, retry_after)
+    return max(0, longest_retry)
 
 
 def record_login_failure(login):
-    key = login_attempt_key(login)
-    cutoff = time.time() - LOGIN_ATTEMPT_WINDOW_SECONDS
+    current_time = time.time()
+    scopes = login_attempt_scopes(login)
     with session_lock:
-        attempts = [stamp for stamp in login_attempts.get(key, []) if stamp > cutoff]
-        attempts.append(time.time())
-        login_attempts[key] = attempts
+        for scope_name, (_, window_seconds) in login_limit_rules().items():
+            key = scopes[scope_name]
+            attempts = recent_login_attempts(key, window_seconds, current_time)
+            attempts.append(current_time)
+            login_attempts[key] = attempts
+
+        if len(login_attempts) > LOGIN_TRACKING_MAX_KEYS:
+            oldest_keys = sorted(
+                login_attempts,
+                key=lambda key: login_attempts[key][-1] if login_attempts[key] else 0,
+            )
+            for key in oldest_keys[: len(login_attempts) - LOGIN_TRACKING_MAX_KEYS]:
+                login_attempts.pop(key, None)
 
 
 def clear_login_failures(login):
+    scopes = login_attempt_scopes(login)
     with session_lock:
-        login_attempts.pop(login_attempt_key(login), None)
+        login_attempts.pop(scopes["pair"], None)
+        login_attempts.pop(scopes["account"], None)
+
+
+def should_log_security_event(action, login):
+    client_ip = client_ip_address()
+    normalized_login = str(login or "").strip().lower()
+    keys = (
+        (action, "ip", client_ip),
+        (action, "account", normalized_login),
+    )
+    current_time = time.time()
+    with session_lock:
+        if any(
+            current_time - security_audit_cooldowns.get(key, 0)
+            < SECURITY_AUDIT_COOLDOWN_SECONDS
+            for key in keys
+        ):
+            return False
+        for key in keys:
+            security_audit_cooldowns[key] = current_time
+    return True
 
 
 def prune_in_memory_auth_state():
     current_time = time.time()
-    login_cutoff = current_time - LOGIN_ATTEMPT_WINDOW_SECONDS
+    maximum_window = max(
+        LOGIN_PAIR_WINDOW_SECONDS,
+        LOGIN_ACCOUNT_WINDOW_SECONDS,
+        LOGIN_IP_WINDOW_SECONDS,
+    )
     with session_lock:
         for token, session in list(session_tokens.items()):
             if session.get("expires_at", 0) <= current_time:
                 session_tokens.pop(token, None)
         for key, attempts in list(login_attempts.items()):
-            recent_attempts = [stamp for stamp in attempts if stamp > login_cutoff]
-            if recent_attempts:
-                login_attempts[key] = recent_attempts
+            recent_attempt_list = [
+                stamp for stamp in attempts if stamp > current_time - maximum_window
+            ]
+            if recent_attempt_list:
+                login_attempts[key] = recent_attempt_list
             else:
                 login_attempts.pop(key, None)
+        for key, logged_at in list(security_audit_cooldowns.items()):
+            if current_time - logged_at >= SECURITY_AUDIT_COOLDOWN_SECONDS:
+                security_audit_cooldowns.pop(key, None)
 
 
 def validate_text(value, field, max_length, required=False):
@@ -353,11 +450,46 @@ def request_json():
     return data if isinstance(data, dict) else {}
 
 
+def request_host_is_allowed_for_origin(origin):
+    try:
+        origin_host = urlsplit(origin).netloc.lower()
+    except ValueError:
+        return False
+    if not origin_host:
+        return False
+
+    allowed_hosts = {request.host.lower()}
+    if (request.remote_addr or "") in ("127.0.0.1", "::1"):
+        forwarded_host = request.headers.get("X-Forwarded-Host", "")
+        if forwarded_host:
+            allowed_hosts.add(forwarded_host.split(",", 1)[0].strip().lower())
+    return origin_host in allowed_hosts
+
+
+@app.before_request
+def reject_cross_origin_writes():
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    if not (request.path.startswith("/api/") or request.path == "/swipe"):
+        return None
+    origin = request.headers.get("Origin", "")
+    if origin and not request_host_is_allowed_for_origin(origin):
+        return jsonify({"ok": False, "error": "Cross-origin request rejected"}), 403
+    return None
+
+
 @app.after_request
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()",
+    )
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
@@ -367,9 +499,18 @@ def add_security_headers(response):
     if (
         request.path.startswith("/api/")
         or request.path in ("/", "/dashboard")
-        or request.path.endswith(".csv")
+        or request.path.endswith((".csv", ".xlsx"))
     ):
         response.headers["Cache-Control"] = "no-store"
+    forwarded_https = (
+        (request.remote_addr or "") in ("127.0.0.1", "::1")
+        and request.headers.get("X-Forwarded-Proto", "").lower() == "https"
+    )
+    if request.is_secure or forwarded_https:
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
     return response
 
 
@@ -2329,6 +2470,9 @@ def dashboard_data():
 
 @app.post("/api/access")
 def access_check():
+    if request.content_length and request.content_length > MAX_LOGIN_BODY_BYTES:
+        return jsonify({"ok": False, "error": "Login request is too large"}), 413
+
     data = request_json()
     login = str(data.get("login", "")).strip().lower()
     password = str(data.get("password", ""))
@@ -2339,13 +2483,34 @@ def access_check():
         return jsonify({"ok": False, "error": "Login and password are required"}), 400
     if len(login) > MAX_EMAIL_LENGTH or len(password) > 1024:
         return jsonify({"ok": False, "error": "Login not recognized"}), 403
-    if login_is_rate_limited(login):
-        return jsonify(
+    retry_after = login_retry_after(login)
+    if retry_after:
+        if should_log_security_event("login_rate_limited", login):
+            with db_lock:
+                conn = db_connect()
+                add_audit_log(
+                    conn,
+                    None,
+                    "login_rate_limited",
+                    "account",
+                    login,
+                    {
+                        "login": login,
+                        "source_ip": client_ip_address(),
+                        "retry_after_seconds": retry_after,
+                    },
+                )
+                conn.commit()
+                conn.close()
+        response = jsonify(
             {
                 "ok": False,
-                "error": "Too many failed attempts; try again in five minutes",
+                "error": "Too many failed attempts; try again later",
+                "retry_after_seconds": retry_after,
             }
-        ), 429
+        )
+        response.headers["Retry-After"] = str(retry_after)
+        return response, 429
 
     with db_lock:
         conn = db_connect()
@@ -2367,23 +2532,41 @@ def access_check():
             (login,),
         ).fetchone()
 
-        if (
-            not account
-            or not account["active"]
-            or not normalize_access_role(account["role"])
-            or not check_password_hash(account["password_hash"], password)
-        ):
+        password_hash = account["password_hash"] if account else DUMMY_PASSWORD_HASH
+        password_valid = check_password_hash(password_hash, password)
+        account_valid = bool(
+            account
+            and account["active"]
+            and normalize_access_role(account["role"])
+            and password_valid
+        )
+        if not account_valid:
             record_login_failure(login)
-            add_audit_log(
-                conn,
-                None,
-                "login_failed",
-                "account",
-                login,
-                {"login": login},
-            )
+            retry_after = login_retry_after(login)
+            if should_log_security_event("login_failed", login):
+                add_audit_log(
+                    conn,
+                    None,
+                    "login_failed",
+                    "account",
+                    login,
+                    {
+                        "login": login,
+                        "source_ip": client_ip_address(),
+                    },
+                )
             conn.commit()
             conn.close()
+            if retry_after:
+                response = jsonify(
+                    {
+                        "ok": False,
+                        "error": "Too many failed attempts; try again later",
+                        "retry_after_seconds": retry_after,
+                    }
+                )
+                response.headers["Retry-After"] = str(retry_after)
+                return response, 429
             return jsonify({"ok": False, "error": "Login not recognized"}), 403
 
         account = dict(account)
@@ -2391,9 +2574,22 @@ def access_check():
         role = normalize_access_role(account["role"])
         clear_login_failures(login)
         with session_lock:
+            account_sessions = sorted(
+                (
+                    (existing_token, session)
+                    for existing_token, session in session_tokens.items()
+                    if session.get("card_id") == account["card_id"]
+                ),
+                key=lambda item: item[1].get("created_at", 0),
+            )
+            while len(account_sessions) >= SESSION_LIMIT_PER_ACCOUNT:
+                oldest_token, _ = account_sessions.pop(0)
+                session_tokens.pop(oldest_token, None)
+            created_at = time.time()
             session_tokens[token] = {
                 "card_id": account["card_id"],
-                "expires_at": time.time() + SESSION_MAX_SECONDS,
+                "created_at": created_at,
+                "expires_at": created_at + SESSION_MAX_SECONDS,
             }
         add_audit_log(
             conn,
@@ -2401,7 +2597,7 @@ def access_check():
             "login",
             "account",
             account["card_id"],
-            {"login": login},
+            {"login": login, "source_ip": client_ip_address()},
         )
         conn.commit()
         conn.close()

@@ -96,5 +96,9 @@ The master workbook is a reporting snapshot. Continue using the original wide Ca
 
 - Use a strong, unique API key and administrator password.
 - Keep the Pi server on a trusted network.
+- Login protection is enforced server-side: repeated failures are limited per username/IP pair, per username across IPs, and per IP across usernames.
+- Login error messages do not reveal whether an account exists, and failed-login audit entries are throttled to prevent log flooding.
+- Each account may keep up to three active dashboard sessions; older tokens are invalidated automatically.
+- Browser writes from a different origin are rejected, and HTTPS responses include strict transport and isolation headers.
 - Configure the supplied `station-server.service` file if the server should start automatically after boot.
 - Back up the SQLite database before upgrades or schema changes.

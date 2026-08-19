@@ -2089,6 +2089,7 @@
       lastWarningCount: 0,
       warningPulseTimer: null,
       idleLogoutTimer: null,
+      loginCooldownTimer: null,
       lastIdleActivityAt: 0
     };
 
@@ -2313,6 +2314,28 @@
     function clearIdleLogoutTimer() {
       window.clearTimeout(state.idleLogoutTimer);
       state.idleLogoutTimer = null;
+    }
+
+    function startLoginCooldown(seconds) {
+      window.clearInterval(state.loginCooldownTimer);
+      const endsAt = Date.now() + Math.max(1, Number(seconds) || 1) * 1000;
+      accessLogin.disabled = true;
+
+      const update = () => {
+        const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        if (!remaining) {
+          window.clearInterval(state.loginCooldownTimer);
+          state.loginCooldownTimer = null;
+          accessLogin.disabled = false;
+          accessStatus.textContent = "Try signing in again";
+          return;
+        }
+        const minutes = Math.ceil(remaining / 60);
+        accessStatus.textContent = `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+      };
+
+      update();
+      state.loginCooldownTimer = window.setInterval(update, 1000);
     }
 
     function scheduleIdleLogout() {
@@ -4259,9 +4282,19 @@
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok || data.ok === false) {
+          if (response.status === 429 && data.retry_after_seconds) {
+            setAccess({});
+            renderAdmin();
+            accessPassword.value = "";
+            if (!quiet) startLoginCooldown(data.retry_after_seconds);
+            return false;
+          }
           throw new Error(data.error || "Login not recognized");
         }
 
+        window.clearInterval(state.loginCooldownTimer);
+        state.loginCooldownTimer = null;
+        accessLogin.disabled = false;
         setAccess(data);
         await refreshAdmin();
         await refreshDashboard();
@@ -4269,6 +4302,7 @@
       } catch (error) {
         setAccess({});
         renderAdmin();
+        accessPassword.value = "";
         if (!quiet) accessStatus.textContent = error.message;
         return false;
       }

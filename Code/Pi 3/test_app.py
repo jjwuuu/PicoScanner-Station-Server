@@ -77,6 +77,7 @@ class StationServerTests(unittest.TestCase):
         with self.server.session_lock:
             self.server.session_tokens.clear()
             self.server.login_attempts.clear()
+            self.server.security_audit_cooldowns.clear()
         self.server.cert_modes.clear()
         self.server.seed_stations()
         self.server.bootstrap_admin()
@@ -190,6 +191,100 @@ class StationServerTests(unittest.TestCase):
         self.assertEqual(regular.get_json()["warning"], "outside_open_hours")
         self.assertTrue(staff.get_json()["allowed"])
         self.assertTrue(volunteer.get_json()["allowed"])
+
+    def test_login_rate_limits_block_username_rotation_and_throttle_audit(self):
+        responses = []
+        with patch.object(self.server, "LOGIN_IP_ATTEMPT_LIMIT", 3):
+            for index in range(3):
+                responses.append(
+                    self.client.post(
+                        "/api/access",
+                        json={"login": f"unknown-{index}", "password": "wrong"},
+                        environ_base={"REMOTE_ADDR": "10.20.30.40"},
+                    )
+                )
+            blocked = self.client.post(
+                "/api/access",
+                json={"login": "another-name", "password": "wrong"},
+                environ_base={"REMOTE_ADDR": "10.20.30.40"},
+            )
+
+        self.assertEqual(responses[-1].status_code, 429)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn("Retry-After", blocked.headers)
+        self.assertGreater(blocked.get_json()["retry_after_seconds"], 0)
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            failed_logs = conn.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'login_failed'"
+            ).fetchone()[0]
+            limited_logs = conn.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'login_rate_limited'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(failed_logs, 1)
+        self.assertEqual(limited_logs, 1)
+
+    def test_login_rate_limits_block_distributed_account_attack(self):
+        with patch.object(self.server, "LOGIN_ACCOUNT_ATTEMPT_LIMIT", 3):
+            responses = [
+                self.client.post(
+                    "/api/access",
+                    json={"login": "admin", "password": "wrong"},
+                    environ_base={"REMOTE_ADDR": f"10.30.0.{index}"},
+                )
+                for index in range(1, 4)
+            ]
+            blocked = self.client.post(
+                "/api/access",
+                json={"login": "admin", "password": "AdminPass123"},
+                environ_base={"REMOTE_ADDR": "10.30.0.99"},
+            )
+
+        self.assertEqual(responses[-1].status_code, 429)
+        self.assertEqual(blocked.status_code, 429)
+
+    def test_login_sessions_origins_and_payloads_are_hardened(self):
+        self.create_card(
+            "secure-staff-card",
+            "B113",
+            "Secure Staff",
+            "securestaff@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        tokens = [self.login("securestaff", "StaffPass123") for _ in range(4)]
+        self.assertEqual(
+            self.client.get("/api/admin", headers=self.auth(tokens[0])).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/api/admin", headers=self.auth(tokens[-1])).status_code,
+            200,
+        )
+
+        cross_origin = self.client.post(
+            "/api/logout",
+            headers={**self.auth(tokens[-1]), "Origin": "https://attacker.invalid"},
+        )
+        self.assertEqual(cross_origin.status_code, 403)
+
+        oversized = self.client.post(
+            "/api/access",
+            data="x" * (self.server.MAX_LOGIN_BODY_BYTES + 1),
+            content_type="application/json",
+        )
+        self.assertEqual(oversized.status_code, 413)
+
+        secure_headers = self.client.get(
+            "/dashboard",
+            headers={"X-Forwarded-Proto": "https"},
+        ).headers
+        self.assertEqual(secure_headers["Cross-Origin-Opener-Policy"], "same-origin")
+        self.assertIn("max-age=", secure_headers["Strict-Transport-Security"])
 
     def test_swipe_metadata_is_locked_and_event_id_is_idempotent(self):
         payload = {
