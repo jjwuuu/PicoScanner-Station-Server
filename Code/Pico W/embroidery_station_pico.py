@@ -24,13 +24,14 @@ STATION_API_KEY = "key"
 print("Station key loaded:", STATION_API_KEY)
 print("Server URL:", SERVER_URL)
 
-# Soldering station reader.
-STATION_ID = "soldering"
-STATION_NAME = "Soldering"
+# Embroidery station reader.
+STATION_ID = "embroidery"
+STATION_NAME = "Embroidery"
 STATION_KIND = "station"
 
 # Hardware pins. These match the newer wiring in test.py.
-LIMIT_SWITCH_PIN = 5
+# Black-and-white wire; connector has one long and one short screw.
+LIMIT_SWITCH_PIN = 28
 NEOPIXEL_PIN = 13
 
 RFID_SCK = 18

@@ -24,9 +24,9 @@ STATION_API_KEY = "key"
 print("Station key loaded:", STATION_API_KEY)
 print("Server URL:", SERVER_URL)
 
-# Soldering station reader.
-STATION_ID = "soldering"
-STATION_NAME = "Soldering"
+# Vinyl and heat press station reader.
+STATION_ID = "vinyl"
+STATION_NAME = "Vinyl / Heat Press"
 STATION_KIND = "station"
 
 # Hardware pins. These match the newer wiring in test.py.

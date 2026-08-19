@@ -24,9 +24,9 @@ STATION_API_KEY = "key"
 print("Station key loaded:", STATION_API_KEY)
 print("Server URL:", SERVER_URL)
 
-# Soldering station reader.
-STATION_ID = "soldering"
-STATION_NAME = "Soldering"
+# 3D printing station reader.
+STATION_ID = "3d-printing"
+STATION_NAME = "3D Printing"
 STATION_KIND = "station"
 
 # Hardware pins. These match the newer wiring in test.py.

@@ -21,13 +21,10 @@ WIFI_PASSWORD = "Ms2019!!"
 SERVER_URL = "http://192.168.1.60:5000/swipe"
 STATION_API_KEY = "key"
 
-print("Station key loaded:", STATION_API_KEY)
-print("Server URL:", SERVER_URL)
-
-# Soldering station reader.
-STATION_ID = "soldering"
-STATION_NAME = "Soldering"
-STATION_KIND = "station"
+# Back entrance reader.
+DOOR_ID = "back-door"
+DOOR_NAME = "Back Door"
+STATION_KIND = "door"
 
 # Hardware pins. These match the newer wiring in test.py.
 LIMIT_SWITCH_PIN = 5
@@ -66,85 +63,10 @@ COLORS = {
     "purple": (45, 0, 60),
 }
 
-led_state = {
-    "mode": "idle",
-    "until": 0,
-    "next_toggle": 0,
-    "on": False,
-}
-
 
 def set_led(color):
     pixel[0] = COLORS[color]
     pixel.write()
-
-
-def wifi_connected():
-    try:
-        return wlan.isconnected()
-    except NameError:
-        return False
-
-
-def set_led_mode(mode, duration_ms=0):
-    now = time.ticks_ms()
-    led_state["mode"] = mode
-    led_state["until"] = time.ticks_add(now, duration_ms) if duration_ms else 0
-    led_state["next_toggle"] = now
-    led_state["on"] = False
-
-    if mode == "idle":
-        set_led("green" if wifi_connected() else "purple")
-    elif mode == "cert_success":
-        set_led("green")
-    elif mode == "access_granted":
-        set_led("blue")
-    elif mode == "station_out":
-        set_led("cyan")
-    elif mode == "access_denied":
-        set_led("red")
-    elif mode == "server_error":
-        set_led("purple")
-
-
-def update_led():
-    now = time.ticks_ms()
-    if led_state["until"] and time.ticks_diff(now, led_state["until"]) >= 0:
-        set_led_mode("idle")
-        return
-
-    mode = led_state["mode"]
-    if mode == "cert_mode_pending":
-        interval = 120
-    elif mode == "cert_mode_armed":
-        interval = 650
-    else:
-        return
-
-    if time.ticks_diff(now, led_state["next_toggle"]) >= 0:
-        led_state["on"] = not led_state["on"]
-        set_led("blue" if led_state["on"] else "off")
-        led_state["next_toggle"] = time.ticks_add(now, interval)
-
-
-def apply_server_led(result):
-    signal = result.get("led_signal", "")
-    action = result.get("action", "")
-
-    if signal == "cert_mode_pending":
-        set_led_mode("cert_mode_pending", 5000)
-    elif signal == "cert_mode_armed":
-        set_led_mode("cert_mode_armed", 41000)
-    elif signal == "cert_success":
-        set_led_mode("cert_success", 2000)
-    elif signal == "server_error":
-        set_led_mode("server_error", 2000)
-    elif signal == "access_denied":
-        set_led_mode("access_denied", 1200)
-    elif action in ("swipe_out", "station_out", "station_auto_out", "exit"):
-        set_led_mode("station_out", 1200)
-    else:
-        set_led_mode("access_granted", 1200)
 
 
 def blink(color, count=3, delay=0.15):
@@ -182,31 +104,6 @@ def connect_wifi():
     return wlan
 
 
-def read_card_and_send(reads=40, required_hits=1):
-    counts = {}
-
-    for _ in range(reads):
-        update_led()
-        reader.init()
-        status, _tag_type = reader.request(reader.REQIDL)
-
-        if status == reader.OK:
-            status, uid = reader.SelectTagSN()
-
-            if status == reader.OK:
-                card_id = str(int.from_bytes(bytes(uid), "little", False))
-                counts[card_id] = counts.get(card_id, 0) + 1
-                print("CARD ID:", card_id)
-
-                if counts[card_id] >= required_hits:
-                    return send_swipe(card_id)
-
-        time.sleep(0.08)
-
-    print("No card read")
-    return None
-
-
 def event_for(card_id):
     global event_counter
     event_counter += 1
@@ -215,14 +112,7 @@ def event_for(card_id):
 
 def post_event(data):
     body = ujson.dumps(data)
-    response = urequests.post(
-        SERVER_URL,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Station-Key": STATION_API_KEY,
-        },
-    )
+    response = urequests.post(SERVER_URL, data=body, headers={"Content-Type": "application/json", "X-Station-Key": STATION_API_KEY})
     text = response.text
     response.close()
     return ujson.loads(text)
@@ -230,7 +120,7 @@ def post_event(data):
 
 def resend_queued():
     global next_queue_retry
-    if urequests is None or not wifi_connected():
+    if urequests is None or not wlan.isconnected():
         return
 
     now = time.ticks_ms()
@@ -252,12 +142,13 @@ def resend_queued():
 def send_swipe(card_id):
     if urequests is None:
         print("urequests is not installed")
-        return {"led_signal": "server_error", "error": "urequests is not installed"}
+        blink("purple", 4)
+        return None
 
     data = {
-        "card_id": card_id,
-        "station_id": STATION_ID,
-        "station_name": STATION_NAME,
+        "card_id": str(card_id),
+        "station_id": DOOR_ID,
+        "station_name": DOOR_NAME,
         "station_kind": STATION_KIND,
         "event_id": event_for(card_id),
     }
@@ -270,19 +161,55 @@ def send_swipe(card_id):
         print("Server error:", error)
         pending = queue.add(data)
         print("Swipe queued; pending:", pending)
-        return {"led_signal": "server_error", "error": "Swipe queued for retry"}
+        blink("purple", 2)
+        return {"queued": True}
+
+
+def read_card_and_send(reads=6, required_hits=2):
+    counts = {}
+
+    for _ in range(reads):
+        status, _tag_type = reader.request(reader.REQIDL)
+
+        if status == reader.OK:
+            status, uid = reader.SelectTagSN()
+
+            if status == reader.OK:
+                card_id = str(int.from_bytes(bytes(uid), "little", False))
+                counts[card_id] = counts.get(card_id, 0) + 1
+                print("CARD ID:", card_id)
+
+                if counts[card_id] >= required_hits:
+                    return send_swipe(card_id)
+
+        time.sleep(0.08)
+
+    return None
 
 
 def show_result(result):
     if not result:
         return
 
-    apply_server_led(result)
+    signal = result.get("led_signal", "")
+    if signal == "access_denied":
+        blink("red", 3)
+        return
+
+    action = result.get("action")
+
+    if action == "enter":
+        set_led("blue")
+        time.sleep(1)
+    elif action == "exit":
+        set_led("cyan")
+        time.sleep(1)
+    else:
+        blink("red", 3)
 
 
 def wait_for_release():
     while limit_pressed():
-        update_led()
         time.sleep(0.05)
     time.sleep(0.2)
 
@@ -291,11 +218,9 @@ reader.init()
 wlan = connect_wifi()
 set_led("green" if wlan.isconnected() else "purple")
 
-print(STATION_NAME, "scanner ready")
+print(DOOR_NAME, "scanner ready")
 
 while True:
-    update_led()
-
     if not wlan.isconnected():
         wlan = connect_wifi()
     else:
@@ -308,8 +233,9 @@ while True:
         if result:
             show_result(result)
         else:
-            set_led_mode("access_denied", 1000)
+            blink("red", 2)
 
+        set_led("green" if wlan.isconnected() else "purple")
         wait_for_release()
 
     time.sleep(0.05)

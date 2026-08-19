@@ -16,15 +16,12 @@ from offline_queue import OfflineQueue
 
 
 # Edit these for your hotspot and Pi server.
-WIFI_SSID = "YOUR_HOTSPOT_NAME"
-WIFI_PASSWORD = "YOUR_HOTSPOT_PASSWORD"
-SERVER_URL = "http://192.168.1.41:5000/swipe"
-STATION_API_KEY = "change-this-shared-station-key"
+WIFI_SSID = "MS"
+WIFI_PASSWORD = "Ms2019!!"
+SERVER_URL = "http://192.168.1.60:5000/swipe"
+STATION_API_KEY = "key"
 
-# Set these per door Pico.
-# For the back door, change these to:
-# DOOR_ID = "back-door"
-# DOOR_NAME = "Back Door"
+# Front entrance reader.
 DOOR_ID = "front-door"
 DOOR_NAME = "Front Door"
 STATION_KIND = "door"
@@ -50,6 +47,8 @@ reader = MFRC522(
 )
 queue = OfflineQueue()
 event_counter = 0
+QUEUE_RETRY_MS = 10000
+next_queue_retry = 0
 
 limit_switch = Pin(LIMIT_SWITCH_PIN, Pin.IN, Pin.PULL_UP)
 pixel = neopixel.NeoPixel(Pin(NEOPIXEL_PIN), 1)
@@ -120,8 +119,15 @@ def post_event(data):
 
 
 def resend_queued():
+    global next_queue_retry
     if urequests is None or not wlan.isconnected():
         return
+
+    now = time.ticks_ms()
+    if time.ticks_diff(now, next_queue_retry) < 0:
+        return
+    next_queue_retry = time.ticks_add(now, QUEUE_RETRY_MS)
+
     event = queue.peek()
     if not event:
         return
@@ -130,7 +136,7 @@ def resend_queued():
         queue.remove_first()
         print("Queued swipe delivered; remaining:", len(queue))
     except Exception as error:
-        print("Queued swipe still offline:", error)
+        print("Queued swipe server retry failed:", repr(error))
 
 
 def send_swipe(card_id):
