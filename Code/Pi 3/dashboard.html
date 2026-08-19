@@ -424,6 +424,153 @@
       animation: warning-pulse 1.2s ease-in-out 2;
     }
 
+    .analytics-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: var(--space-4);
+      margin-bottom: var(--space-4);
+    }
+
+    .analytics-header h2,
+    .analytics-header p {
+      margin: 0;
+    }
+
+    .analytics-header h2 {
+      padding: 0;
+      background: transparent;
+      border: 0;
+    }
+
+    .analytics-header p {
+      margin-top: var(--space-2);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .analytics-controls {
+      display: flex;
+      align-items: flex-end;
+      gap: var(--space-2);
+    }
+
+    .analytics-controls > div {
+      min-width: 150px;
+    }
+
+    .analytics-summary {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+
+    .analytics-metric {
+      min-height: 104px;
+      padding: var(--space-4);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--blue);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .analytics-metric:nth-child(2) { border-top-color: var(--green); }
+    .analytics-metric:nth-child(3) { border-top-color: var(--cyan); }
+    .analytics-metric:nth-child(4) { border-top-color: var(--amber); }
+    .analytics-metric:nth-child(5) { border-top-color: var(--red); }
+
+    .analytics-metric span {
+      display: block;
+      margin-bottom: var(--space-2);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .analytics-metric strong {
+      display: block;
+      color: var(--heading-ink);
+      font-size: 26px;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
+    }
+
+    .analytics-charts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-4);
+      margin-bottom: var(--space-4);
+    }
+
+    .analytics-chart {
+      padding: var(--space-4);
+    }
+
+    .analytics-chart h3 {
+      margin: 0 0 var(--space-4);
+      font-size: 15px;
+    }
+
+    .analytics-chart.full-row {
+      grid-column: 1 / -1;
+    }
+
+    #analytics-stations-body {
+      white-space: nowrap;
+    }
+
+    #analytics-panel .table-scroll table {
+      min-width: 680px;
+    }
+
+    .chart-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .chart-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 0.8fr) minmax(140px, 2fr) auto;
+      align-items: center;
+      gap: var(--space-3);
+      min-height: 28px;
+    }
+
+    .chart-label {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .chart-track {
+      height: 12px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+    }
+
+    .chart-fill {
+      min-width: 2px;
+      height: 100%;
+      background: var(--blue);
+    }
+
+    .chart-fill.sessions { background: var(--green); }
+    .chart-fill.after-hours { background: var(--amber); }
+
+    .chart-value {
+      min-width: 72px;
+      color: var(--muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
     @keyframes warning-pulse {
       0%,
       100% {
@@ -1224,6 +1371,18 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .analytics-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .analytics-charts {
+        grid-template-columns: 1fr;
+      }
+
+      .analytics-chart.full-row {
+        grid-column: auto;
+      }
+
       .pending-row {
         grid-template-columns: 1fr;
       }
@@ -1288,6 +1447,25 @@
 
       .summary {
         grid-template-columns: 1fr;
+      }
+
+      .analytics-header,
+      .analytics-controls {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .analytics-summary {
+        grid-template-columns: 1fr;
+      }
+
+      .chart-row {
+        grid-template-columns: 1fr auto;
+      }
+
+      .chart-track {
+        grid-column: 1 / -1;
+        grid-row: 2;
       }
 
       .metric {
@@ -1586,6 +1764,71 @@
           </div>
         </section>
 
+        <section id="analytics-panel" class="full-row hidden">
+          <div class="analytics-header">
+            <div>
+              <h2>Usage Analytics</h2>
+              <p id="analytics-status">Loading usage data...</p>
+            </div>
+            <div class="analytics-controls">
+              <div>
+                <label for="analytics-range">Date range</label>
+                <select id="analytics-range">
+                  <option value="7">Last 7 days</option>
+                  <option value="30" selected>Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="0">All time</option>
+                </select>
+              </div>
+              <button id="download-master" class="primary" type="button">Export Master Workbook</button>
+            </div>
+          </div>
+
+          <div class="analytics-summary">
+            <div class="analytics-metric"><span>Total Station Time</span><strong id="analytics-total-time">--</strong></div>
+            <div class="analytics-metric"><span>Completed Sessions</span><strong id="analytics-session-count">--</strong></div>
+            <div class="analytics-metric"><span>Unique Station Users</span><strong id="analytics-unique-users">--</strong></div>
+            <div class="analytics-metric"><span>Most Used Station</span><strong id="analytics-top-station">--</strong></div>
+            <div class="analytics-metric"><span>Authorized After Hours</span><strong id="analytics-after-hours">--</strong></div>
+          </div>
+
+          <div class="analytics-charts">
+            <section class="panel analytics-chart">
+              <h3>Station Time</h3>
+              <div id="station-time-chart" class="chart-list"></div>
+            </section>
+            <section class="panel analytics-chart">
+              <h3>Station Sessions</h3>
+              <div id="station-session-chart" class="chart-list"></div>
+            </section>
+            <section class="panel analytics-chart full-row">
+              <h3>Authorized After-Hours Activity</h3>
+              <div id="after-hours-chart" class="chart-list"></div>
+            </section>
+          </div>
+
+          <div class="analytics-charts">
+            <section class="panel">
+              <h2>Station Details</h2>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>Station</th><th>Sessions</th><th>Total Time</th><th>Average</th><th>Users</th><th>Active</th></tr></thead>
+                  <tbody id="analytics-stations-body"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <h2>After-Hours People</h2>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th>Person</th><th>Role</th><th>Visits</th><th>Time</th><th>Last Visit</th></tr></thead>
+                  <tbody id="analytics-after-hours-body"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
         <div id="station-rules-panel" class="panel full-row">
           <h2>Station Rules</h2>
           <div class="table-scroll station-rules-table">
@@ -1814,6 +2057,8 @@
       certifyPermissions: [],
       canvasSyncTasks: [],
       auditLog: [],
+      analytics: null,
+      analyticsDays: 30,
       canCertifyStationIds: [],
       pendingCards: [],
       pendingCardCount: 0,
@@ -1836,6 +2081,7 @@
       expandedCertificationCards: new Set(),
       dashboardRequestInFlight: false,
       adminRequestInFlight: false,
+      analyticsRequestInFlight: false,
       pendingCardsRequestInFlight: false,
       hasDashboardLoaded: false,
       lastDashboardSuccessAt: "",
@@ -1863,6 +2109,20 @@
     const downloadSwipesButton = document.getElementById("download-swipes");
     const downloadAuditButton = document.getElementById("download-audit");
     const downloadCardsButton = document.getElementById("download-cards");
+    const downloadMasterButton = document.getElementById("download-master");
+    const analyticsPanel = document.getElementById("analytics-panel");
+    const analyticsRange = document.getElementById("analytics-range");
+    const analyticsStatus = document.getElementById("analytics-status");
+    const analyticsTotalTime = document.getElementById("analytics-total-time");
+    const analyticsSessionCount = document.getElementById("analytics-session-count");
+    const analyticsUniqueUsers = document.getElementById("analytics-unique-users");
+    const analyticsTopStation = document.getElementById("analytics-top-station");
+    const analyticsAfterHours = document.getElementById("analytics-after-hours");
+    const stationTimeChart = document.getElementById("station-time-chart");
+    const stationSessionChart = document.getElementById("station-session-chart");
+    const afterHoursChart = document.getElementById("after-hours-chart");
+    const analyticsStationsBody = document.getElementById("analytics-stations-body");
+    const analyticsAfterHoursBody = document.getElementById("analytics-after-hours-body");
     const peopleBody = document.getElementById("people-body");
     const stationsBody = document.getElementById("stations-body");
     const sessionsBody = document.getElementById("sessions-body");
@@ -2263,6 +2523,7 @@
       panel.classList.add("active");
       if (shouldRefresh && tabName === "swipes") refreshDashboard();
       if (shouldRefresh && tabName !== "dashboard" && tabName !== "swipes") refreshAdmin();
+      if (shouldRefresh && tabName === "admin" && state.role === "admin") refreshAnalytics();
     }
 
     function updateTabVisibility(role) {
@@ -2350,10 +2611,15 @@
       stationRulesPanel.classList.toggle("hidden", !stationRuleAccess);
       certifyPermissionsPanel.classList.toggle("hidden", !canManageCertifyPermissions());
       canvasImportPanel.classList.toggle("hidden", !showBroncoId);
+      analyticsPanel.classList.toggle("hidden", !showBroncoId);
       canvasSyncPanel.classList.toggle("hidden", !showBroncoId);
       testPanel.classList.toggle("hidden", !showBroncoId);
       cardLock.classList.toggle("hidden", cardAccess);
       cardContent.classList.toggle("hidden", !cardAccess);
+      downloadSwipesButton.classList.toggle("hidden", !showBroncoId);
+      downloadAuditButton.classList.toggle("hidden", !showBroncoId);
+      downloadCardsButton.classList.toggle("hidden", !showBroncoId);
+      downloadMasterButton.classList.toggle("hidden", !showBroncoId);
 
       document.querySelectorAll("#cert-form input, #cert-form textarea, #cert-form button").forEach(item => {
         item.disabled = !certEditAccess;
@@ -2399,6 +2665,7 @@
         state.certifications = [];
         state.certifyPermissions = [];
         state.canvasSyncTasks = [];
+        state.analytics = null;
         state.canCertifyStationIds = [];
         state.pendingCards = [];
         state.pendingCardCount = 0;
@@ -3464,6 +3731,99 @@
       });
     }
 
+    function renderBarChart(container, rows, valueKey, valueFormatter, fillClass = "") {
+      const maximum = Math.max(0, ...rows.map(row => Number(row[valueKey]) || 0));
+      container.innerHTML = rows.length
+        ? rows.map(row => {
+            const value = Number(row[valueKey]) || 0;
+            const width = maximum ? Math.max(1, (value / maximum) * 100) : 0;
+            return `
+              <div class="chart-row">
+                <span class="chart-label">${escapeHtml(row.label)}</span>
+                <div class="chart-track" role="img" aria-label="${escapeHtml(row.label)}: ${escapeHtml(valueFormatter(value))}">
+                  <div class="chart-fill ${escapeHtml(fillClass)}" style="width: ${width}%"></div>
+                </div>
+                <span class="chart-value">${escapeHtml(valueFormatter(value))}</span>
+              </div>
+            `;
+          }).join("")
+        : `<div class="subtle">No activity in this date range</div>`;
+    }
+
+    function renderAnalytics() {
+      if (state.role !== "admin") return;
+      const analytics = state.analytics;
+      if (!analytics) {
+        analyticsStatus.textContent = "Loading usage data...";
+        analyticsStationsBody.innerHTML = loadingRow(6);
+        analyticsAfterHoursBody.innerHTML = loadingRow(5);
+        return;
+      }
+
+      const summary = analytics.summary || {};
+      analyticsTotalTime.textContent = formatDuration(summary.total_usage_seconds || 0);
+      analyticsSessionCount.textContent = Number(summary.completed_sessions || 0).toLocaleString();
+      analyticsUniqueUsers.textContent = Number(summary.unique_users || 0).toLocaleString();
+      analyticsTopStation.textContent = summary.busiest_station || "--";
+      analyticsAfterHours.textContent = formatDuration(summary.after_hours_seconds || 0);
+      analyticsStatus.textContent = [
+        analytics.period_label,
+        `Open hours ${analytics.opening_hours}`,
+        analytics.space_open_now ? "Open now" : "After hours",
+        analytics.timezone,
+        `Updated ${formatDateTime(analytics.generated_at)}`
+      ].join(" | ");
+
+      const stations = analytics.station_usage || [];
+      renderBarChart(
+        stationTimeChart,
+        stations.map(row => ({ label: row.station_name, total_seconds: row.total_seconds })),
+        "total_seconds",
+        formatDuration
+      );
+      renderBarChart(
+        stationSessionChart,
+        stations.map(row => ({ label: row.station_name, sessions: row.sessions })),
+        "sessions",
+        value => `${Number(value).toLocaleString()} session${Number(value) === 1 ? "" : "s"}`,
+        "sessions"
+      );
+
+      const afterHoursPeople = analytics.after_hours_people || [];
+      renderBarChart(
+        afterHoursChart,
+        afterHoursPeople.map(row => ({ label: row.name, outside_seconds: row.outside_seconds })),
+        "outside_seconds",
+        formatDuration,
+        "after-hours"
+      );
+
+      analyticsStationsBody.innerHTML = stations.length
+        ? stations.map(row => `
+            <tr>
+              <td><strong>${escapeHtml(row.station_name)}</strong></td>
+              <td>${Number(row.sessions || 0).toLocaleString()}</td>
+              <td>${formatDuration(row.total_seconds)}</td>
+              <td>${formatDuration(row.average_seconds)}</td>
+              <td>${Number(row.unique_users || 0).toLocaleString()}</td>
+              <td>${Number(row.active_now || 0).toLocaleString()}</td>
+            </tr>
+          `).join("")
+        : emptyRow(6, "No stations configured");
+
+      analyticsAfterHoursBody.innerHTML = afterHoursPeople.length
+        ? afterHoursPeople.map(row => `
+            <tr>
+              <td><strong>${escapeHtml(row.name)}</strong><br><span class="subtle">${escapeHtml(row.email || "")}</span></td>
+              <td><span class="badge ok">${escapeHtml(row.role)}</span></td>
+              <td>${Number(row.visits || 0).toLocaleString()}</td>
+              <td>${formatDuration(row.outside_seconds)}</td>
+              <td>${formatDateTime(row.last_seen_at)}</td>
+            </tr>
+          `).join("")
+        : emptyRow(5, "No authorized after-hours visits in this date range");
+    }
+
     function renderAdmin() {
       updateAccessUi();
       renderPendingCards();
@@ -3475,6 +3835,7 @@
       renderTestPanel();
       renderCanvasSyncTasks();
       renderAuditLog();
+      renderAnalytics();
       renderCardPersonLookup();
       renderCertCardLookup();
       renderCertPersonFilterLookup();
@@ -3856,6 +4217,31 @@
       }
     }
 
+    async function refreshAnalytics() {
+      if (state.role !== "admin" || state.analyticsRequestInFlight) return;
+      state.analyticsRequestInFlight = true;
+      try {
+        const response = await fetch(`/api/analytics?days=${state.analyticsDays}`, {
+          cache: "no-store",
+          headers: authHeaders()
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            sessionExpired("Session expired - log in again");
+            return;
+          }
+          throw new Error(data.error || `Analytics refresh failed (${response.status})`);
+        }
+        state.analytics = data.analytics || null;
+        renderAnalytics();
+      } catch (error) {
+        analyticsStatus.textContent = error.message || "Analytics unavailable";
+      } finally {
+        state.analyticsRequestInFlight = false;
+      }
+    }
+
     async function checkAccess(login, password, quiet = false) {
       login = String(login || "").trim();
       password = String(password || "");
@@ -4175,6 +4561,17 @@
       downloadCsv("/cards.csv");
     });
 
+    downloadMasterButton.addEventListener("click", () => {
+      downloadCsv("/master-export.xlsx");
+    });
+
+    analyticsRange.addEventListener("change", () => {
+      state.analyticsDays = Number(analyticsRange.value) || 0;
+      state.analytics = null;
+      renderAnalytics();
+      refreshAnalytics();
+    });
+
     importCanvasButton.addEventListener("click", () => {
       importCanvasDatabase();
     });
@@ -4303,6 +4700,13 @@
 
     scheduleDashboardPoll(true);
     schedulePendingCardsPoll(true);
+
+    window.setInterval(() => {
+      const adminTabActive = document.getElementById("tab-admin").classList.contains("active");
+      if (state.role === "admin" && adminTabActive && document.visibilityState === "visible") {
+        refreshAnalytics();
+      }
+    }, 15000);
 
     document.addEventListener("visibilitychange", () => {
       scheduleDashboardPoll(true);

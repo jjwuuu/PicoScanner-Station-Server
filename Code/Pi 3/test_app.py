@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class StationServerTests(unittest.TestCase):
@@ -21,6 +22,9 @@ class StationServerTests(unittest.TestCase):
                 "STATION_BOOTSTRAP_ADMIN_USERNAME",
                 "STATION_BOOTSTRAP_ADMIN_PASSWORD",
                 "STATION_BOOTSTRAP_ADMIN_NAME",
+                "STATION_TIMEZONE",
+                "STATION_OPENING_HOUR",
+                "STATION_CLOSING_HOUR",
             )
         }
         os.environ.update(
@@ -32,6 +36,9 @@ class StationServerTests(unittest.TestCase):
                 "STATION_BOOTSTRAP_ADMIN_USERNAME": "admin",
                 "STATION_BOOTSTRAP_ADMIN_PASSWORD": "AdminPass123",
                 "STATION_BOOTSTRAP_ADMIN_NAME": "Test Admin",
+                "STATION_TIMEZONE": "UTC",
+                "STATION_OPENING_HOUR": "0",
+                "STATION_CLOSING_HOUR": "24",
             }
         )
         cls.server = importlib.import_module("app")
@@ -150,6 +157,39 @@ class StationServerTests(unittest.TestCase):
             json={"card_id": "unknown", "station_id": "front-door"},
         )
         self.assertEqual(response.status_code, 401)
+
+    def test_opening_hours_allow_authorized_roles_after_hours(self):
+        self.create_card("regular-card", "B110", "Regular User", "regular@cpp.edu")
+        self.create_card(
+            "staff-card",
+            "B111",
+            "Staff User",
+            "staff@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        self.create_card(
+            "volunteer-card",
+            "B112",
+            "Volunteer User",
+            "volunteer@cpp.edu",
+            designation="Volunteer",
+            login_role="volunteer",
+            password="VolunteerPass123",
+        )
+
+        with patch.object(self.server, "space_is_open", return_value=False):
+            regular = self.swipe("regular-card", "front-door", "after-hours-user")
+            staff = self.swipe("staff-card", "front-door", "after-hours-staff")
+            volunteer = self.swipe(
+                "volunteer-card", "front-door", "after-hours-volunteer"
+            )
+
+        self.assertFalse(regular.get_json()["allowed"])
+        self.assertEqual(regular.get_json()["warning"], "outside_open_hours")
+        self.assertTrue(staff.get_json()["allowed"])
+        self.assertTrue(volunteer.get_json()["allowed"])
 
     def test_swipe_metadata_is_locked_and_event_id_is_idempotent(self):
         payload = {
@@ -494,14 +534,38 @@ class StationServerTests(unittest.TestCase):
         staff_cards = self.client.get(
             "/cards.csv", headers=self.auth(staff_token)
         )
-        self.assertEqual(staff_cards.status_code, 200)
-        self.assertNotIn("bronco_id", staff_cards.get_data(as_text=True).splitlines()[0])
+        self.assertEqual(staff_cards.status_code, 403)
         admin_cards = self.client.get(
             "/cards.csv", headers=self.auth(self.admin_token)
         )
         self.assertEqual(admin_cards.status_code, 200)
         self.assertIn("bronco_id", admin_cards.get_data(as_text=True).splitlines()[0])
         self.assertIn("login_role", admin_cards.get_data(as_text=True).splitlines()[0])
+
+        analytics = self.client.get(
+            "/api/analytics?days=30", headers=self.auth(self.admin_token)
+        )
+        self.assertEqual(analytics.status_code, 200)
+        self.assertIn("station_usage", analytics.get_json()["analytics"])
+        self.assertEqual(
+            self.client.get(
+                "/api/analytics?days=30", headers=self.auth(staff_token)
+            ).status_code,
+            403,
+        )
+
+        workbook = self.client.get(
+            "/master-export.xlsx", headers=self.auth(self.admin_token)
+        )
+        self.assertEqual(workbook.status_code, 200)
+        self.assertTrue(workbook.data.startswith(b"PK"))
+        self.assertIn(".xlsx", workbook.headers["Content-Disposition"])
+        self.assertEqual(
+            self.client.get(
+                "/master-export.xlsx", headers=self.auth(staff_token)
+            ).status_code,
+            403,
+        )
 
         invalid_reader = self.client.post(
             "/api/test-swipe",

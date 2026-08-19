@@ -9,8 +9,12 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, Response, jsonify, request
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -30,6 +34,28 @@ BOOTSTRAP_ADMIN_USERNAME = os.environ.get(
     "",
 ).strip().lower()
 STATION_API_KEY = os.environ.get("STATION_API_KEY", "").strip()
+SPACE_TIMEZONE_NAME = os.environ.get(
+    "STATION_TIMEZONE",
+    "America/Los_Angeles",
+).strip()
+try:
+    SPACE_TIMEZONE = ZoneInfo(SPACE_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    SPACE_TIMEZONE = timezone.utc
+    SPACE_TIMEZONE_NAME = "UTC"
+
+
+def configured_hour(name, default, allow_24=False):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    maximum = 24 if allow_24 else 23
+    return value if 0 <= value <= maximum else default
+
+
+OPENING_HOUR = configured_hour("STATION_OPENING_HOUR", 12)
+CLOSING_HOUR = configured_hour("STATION_CLOSING_HOUR", 17, allow_24=True)
 PERSON_REF_SECRET = (
     os.environ.get("STATION_PERSON_REF_SECRET", "").strip()
     or STATION_API_KEY
@@ -79,6 +105,97 @@ def elapsed_seconds(started_at, ended_at=None):
         return max(0, int((end - start).total_seconds()))
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def local_space_time(value=None):
+    value = value or datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(SPACE_TIMEZONE)
+
+
+def space_is_open(value=None):
+    local_time = local_space_time(value)
+    decimal_hour = local_time.hour + (local_time.minute / 60)
+    if OPENING_HOUR == CLOSING_HOUR:
+        return True
+    if OPENING_HOUR < CLOSING_HOUR:
+        return OPENING_HOUR <= decimal_hour < CLOSING_HOUR
+    return decimal_hour >= OPENING_HOUR or decimal_hour < CLOSING_HOUR
+
+
+def display_hour(hour):
+    if hour == 24:
+        hour = 0
+    suffix = "AM" if hour < 12 else "PM"
+    display = hour % 12 or 12
+    return f"{display}:00 {suffix}"
+
+
+def opening_hours_label():
+    return f"{display_hour(OPENING_HOUR)}-{display_hour(CLOSING_HOUR)}"
+
+
+def after_hours_access_role(conn, card_id):
+    row = conn.execute(
+        """
+        SELECT cards.designation, user_accounts.role, user_accounts.active
+        FROM cards
+        LEFT JOIN user_accounts ON user_accounts.card_id = cards.card_id
+        WHERE cards.card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()
+    if not row:
+        return ""
+
+    account_role = normalize_access_role(row["role"])
+    if row["active"] and account_role in ("admin", "staff", "volunteer"):
+        return account_role
+
+    designation = normalize_access_role(row["designation"])
+    return designation if designation in ("staff", "volunteer") else ""
+
+
+def outside_open_hours_seconds(start_utc, end_utc):
+    if end_utc <= start_utc:
+        return 0
+    if OPENING_HOUR == CLOSING_HOUR:
+        return 0
+
+    total_seconds = int((end_utc - start_utc).total_seconds())
+    inside_seconds = 0
+    local_start = local_space_time(start_utc)
+    local_end = local_space_time(end_utc)
+    current_date = local_start.date()
+    final_date = local_end.date()
+
+    while current_date <= final_date:
+        day_start = datetime.combine(
+            current_date,
+            datetime.min.time(),
+            tzinfo=SPACE_TIMEZONE,
+        )
+        if OPENING_HOUR < CLOSING_HOUR:
+            open_start = day_start + timedelta(hours=OPENING_HOUR)
+            open_end = day_start + timedelta(hours=CLOSING_HOUR)
+            overlap_start = max(start_utc, open_start.astimezone(timezone.utc))
+            overlap_end = min(end_utc, open_end.astimezone(timezone.utc))
+            if overlap_end > overlap_start:
+                inside_seconds += int((overlap_end - overlap_start).total_seconds())
+        else:
+            open_ranges = (
+                (day_start, day_start + timedelta(hours=CLOSING_HOUR)),
+                (day_start + timedelta(hours=OPENING_HOUR), day_start + timedelta(days=1)),
+            )
+            for open_start, open_end in open_ranges:
+                overlap_start = max(start_utc, open_start.astimezone(timezone.utc))
+                overlap_end = min(end_utc, open_end.astimezone(timezone.utc))
+                if overlap_end > overlap_start:
+                    inside_seconds += int((overlap_end - overlap_start).total_seconds())
+        current_date += timedelta(days=1)
+
+    return max(0, total_seconds - inside_seconds)
 
 
 def normalize_access_role(value):
@@ -1575,6 +1692,23 @@ def handle_door_swipe(conn, card_id, door_id, door_name, event_id=""):
                 allowed=False,
                 warning="inactive_card",
                 details="Card is disabled in the card database",
+                event_id=event_id,
+            )
+
+        if not space_is_open() and not after_hours_access_role(conn, card_id):
+            return log_event(
+                conn,
+                card_id,
+                door_id,
+                door_name,
+                "door",
+                "denied",
+                allowed=False,
+                warning="outside_open_hours",
+                details=(
+                    f"Regular user entry is limited to {opening_hours_label()} "
+                    f"({SPACE_TIMEZONE_NAME})"
+                ),
                 event_id=event_id,
             )
 
@@ -4106,6 +4240,345 @@ def warning_rows(conn, limit):
     ]
 
 
+def analytics_snapshot(conn, days=30, current_time=None):
+    current_time = current_time or datetime.now(timezone.utc)
+    cutoff = current_time - timedelta(days=days) if days else None
+    cutoff_iso = cutoff.replace(microsecond=0).isoformat() if cutoff else ""
+
+    station_rows = conn.execute(
+        "SELECT id, name FROM stations WHERE kind = 'station' ORDER BY name"
+    ).fetchall()
+    station_usage = {
+        row["id"]: {
+            "station_id": row["id"],
+            "station_name": row["name"],
+            "sessions": 0,
+            "total_seconds": 0,
+            "unique_card_ids": set(),
+            "active_now": 0,
+        }
+        for row in station_rows
+    }
+
+    event_query = """
+        SELECT station_id, station_name, card_id, duration_seconds
+        FROM swipe_events
+        WHERE station_kind = 'station'
+          AND allowed = 1
+          AND action IN ('station_out', 'station_auto_out')
+    """
+    event_params = []
+    if cutoff_iso:
+        event_query += " AND timestamp >= ?"
+        event_params.append(cutoff_iso)
+
+    for row in conn.execute(event_query, event_params).fetchall():
+        item = station_usage.setdefault(
+            row["station_id"],
+            {
+                "station_id": row["station_id"],
+                "station_name": row["station_name"],
+                "sessions": 0,
+                "total_seconds": 0,
+                "unique_card_ids": set(),
+                "active_now": 0,
+            },
+        )
+        item["sessions"] += 1
+        item["total_seconds"] += max(0, int(row["duration_seconds"] or 0))
+        item["unique_card_ids"].add(row["card_id"])
+
+    for row in conn.execute(
+        "SELECT station_id, COUNT(*) AS active_now FROM active_sessions GROUP BY station_id"
+    ).fetchall():
+        if row["station_id"] in station_usage:
+            station_usage[row["station_id"]]["active_now"] = row["active_now"]
+
+    usage_rows = []
+    all_unique_cards = set()
+    for item in station_usage.values():
+        all_unique_cards.update(item["unique_card_ids"])
+        sessions = item["sessions"]
+        usage_rows.append(
+            {
+                "station_id": item["station_id"],
+                "station_name": item["station_name"],
+                "sessions": sessions,
+                "total_seconds": item["total_seconds"],
+                "average_seconds": int(item["total_seconds"] / sessions) if sessions else 0,
+                "unique_users": len(item["unique_card_ids"]),
+                "active_now": item["active_now"],
+            }
+        )
+    usage_rows.sort(
+        key=lambda item: (
+            -item["total_seconds"],
+            -item["sessions"],
+            item["station_name"].lower(),
+        )
+    )
+
+    outside_query = """
+        SELECT
+            swipe_events.card_id,
+            cards.name,
+            cards.email,
+            cards.designation,
+            user_accounts.role AS login_role,
+            user_accounts.active AS login_active,
+            swipe_events.timestamp,
+            swipe_events.duration_seconds
+        FROM swipe_events
+        JOIN cards ON cards.card_id = swipe_events.card_id
+        LEFT JOIN user_accounts ON user_accounts.card_id = cards.card_id
+        WHERE swipe_events.station_kind = 'door'
+          AND swipe_events.action = 'exit'
+          AND swipe_events.allowed = 1
+          AND swipe_events.duration_seconds IS NOT NULL
+    """
+    outside_params = []
+    if cutoff_iso:
+        outside_query += " AND swipe_events.timestamp >= ?"
+        outside_params.append(cutoff_iso)
+
+    after_hours_people = {}
+    for row in conn.execute(outside_query, outside_params).fetchall():
+        login_role = normalize_access_role(row["login_role"]) if row["login_active"] else ""
+        designation_role = normalize_access_role(row["designation"])
+        access_role = login_role or (
+            designation_role if designation_role in ("staff", "volunteer") else ""
+        )
+        if access_role not in ("admin", "staff", "volunteer"):
+            continue
+
+        try:
+            ended_at = parse_iso(row["timestamp"])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        started_at = ended_at - timedelta(seconds=max(0, row["duration_seconds"] or 0))
+        outside_seconds = outside_open_hours_seconds(started_at, ended_at)
+        if not outside_seconds:
+            continue
+
+        item = after_hours_people.setdefault(
+            row["card_id"],
+            {
+                "card_id": row["card_id"],
+                "name": row["name"] or row["card_id"],
+                "email": row["email"] or "",
+                "role": role_label(access_role),
+                "visits": 0,
+                "outside_seconds": 0,
+                "last_seen_at": "",
+            },
+        )
+        item["visits"] += 1
+        item["outside_seconds"] += outside_seconds
+        if row["timestamp"] > item["last_seen_at"]:
+            item["last_seen_at"] = row["timestamp"]
+
+    after_hours_rows = sorted(
+        after_hours_people.values(),
+        key=lambda item: (-item["outside_seconds"], item["name"].lower()),
+    )
+
+    hour_counts = [0] * 24
+    hour_query = """
+        SELECT timestamp FROM swipe_events
+        WHERE station_kind = 'station' AND action = 'station_in' AND allowed = 1
+    """
+    hour_params = []
+    if cutoff_iso:
+        hour_query += " AND timestamp >= ?"
+        hour_params.append(cutoff_iso)
+    for row in conn.execute(hour_query, hour_params).fetchall():
+        try:
+            hour_counts[local_space_time(parse_iso(row["timestamp"])).hour] += 1
+        except (TypeError, ValueError, OverflowError):
+            continue
+    busiest_hour = max(range(24), key=hour_counts.__getitem__) if any(hour_counts) else None
+
+    total_sessions = sum(item["sessions"] for item in usage_rows)
+    total_usage_seconds = sum(item["total_seconds"] for item in usage_rows)
+    total_after_hours = sum(item["outside_seconds"] for item in after_hours_rows)
+    top_station = next((item for item in usage_rows if item["sessions"]), None)
+    return {
+        "generated_at": current_time.replace(microsecond=0).isoformat(),
+        "days": days,
+        "period_label": "All time" if not days else f"Last {days} days",
+        "timezone": SPACE_TIMEZONE_NAME,
+        "opening_hours": opening_hours_label(),
+        "space_open_now": space_is_open(current_time),
+        "summary": {
+            "completed_sessions": total_sessions,
+            "total_usage_seconds": total_usage_seconds,
+            "unique_users": len(all_unique_cards),
+            "busiest_station": top_station["station_name"] if top_station else "--",
+            "busiest_hour": display_hour(busiest_hour) if busiest_hour is not None else "--",
+            "after_hours_seconds": total_after_hours,
+            "after_hours_people": len(after_hours_rows),
+        },
+        "station_usage": usage_rows,
+        "after_hours_people": after_hours_rows,
+    }
+
+
+def workbook_safe_cell(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
+def add_workbook_sheet(workbook, title, headers, rows):
+    worksheet = workbook.create_sheet(title=title)
+    worksheet.append(headers)
+    header_fill = PatternFill("solid", fgColor="1D4ED8")
+    for cell in worksheet[1]:
+        cell.fill = header_fill
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.alignment = Alignment(vertical="center")
+
+    widths = [len(str(header)) for header in headers]
+    for raw_row in rows:
+        row = dict(raw_row)
+        values = [workbook_safe_cell(row.get(header, "")) for header in headers]
+        worksheet.append(values)
+        for index, value in enumerate(values):
+            widths[index] = min(60, max(widths[index], len(str(value))))
+
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+    worksheet.sheet_view.showGridLines = False
+    for index, width in enumerate(widths, start=1):
+        worksheet.column_dimensions[get_column_letter(index)].width = max(10, width + 2)
+    return worksheet
+
+
+def build_master_workbook(conn):
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    people = conn.execute(
+        """
+        SELECT people.bronco_id, people.name, people.email, people.designation,
+               people.active, cards.card_id AS assigned_card_id,
+               people.notes, people.updated_at
+        FROM people
+        LEFT JOIN cards ON lower(cards.bronco_id) = lower(people.bronco_id)
+        ORDER BY people.name, people.bronco_id
+        """
+    ).fetchall()
+    add_workbook_sheet(
+        workbook, "People",
+        ["bronco_id", "name", "email", "designation", "active", "assigned_card_id", "notes", "updated_at"],
+        people,
+    )
+
+    certifications = conn.execute(
+        """
+        SELECT bronco_certifications.bronco_id, people.name, people.email,
+               cards.card_id, bronco_certifications.station_id,
+               stations.name AS station_name, bronco_certifications.active,
+               bronco_certifications.updated_at, certifications.granted_via,
+               certifications.granted_by, certifications.granted_at,
+               bronco_certifications.notes
+        FROM bronco_certifications
+        JOIN people ON people.bronco_id = bronco_certifications.bronco_id
+        JOIN stations ON stations.id = bronco_certifications.station_id
+        LEFT JOIN cards ON lower(cards.bronco_id) = lower(people.bronco_id)
+        LEFT JOIN certifications
+          ON certifications.card_id = cards.card_id
+         AND certifications.station_id = bronco_certifications.station_id
+        ORDER BY people.name, stations.name
+        """
+    ).fetchall()
+    add_workbook_sheet(
+        workbook, "Certifications",
+        ["bronco_id", "name", "email", "card_id", "station_id", "station_name", "active", "updated_at", "granted_via", "granted_by", "granted_at", "notes"],
+        certifications,
+    )
+
+    cards = conn.execute(
+        """
+        SELECT cards.card_id, cards.bronco_id, cards.name, cards.email,
+               cards.designation, cards.active,
+               user_accounts.username AS login_username,
+               user_accounts.role AS login_role,
+               user_accounts.active AS login_active,
+               cards.notes, cards.updated_at
+        FROM cards
+        LEFT JOIN user_accounts ON user_accounts.card_id = cards.card_id
+        ORDER BY cards.name, cards.card_id
+        """
+    ).fetchall()
+    add_workbook_sheet(
+        workbook, "Cards",
+        ["card_id", "bronco_id", "name", "email", "designation", "active", "login_username", "login_role", "login_active", "notes", "updated_at"],
+        cards,
+    )
+
+    add_workbook_sheet(
+        workbook, "Pending Canvas",
+        ["bronco_id", "name", "email", "card_id", "station_id", "station_name", "desired_active", "created_at", "created_by_card_id", "created_by_name"],
+        canvas_sync_task_rows(conn),
+    )
+
+    swipe_rows = conn.execute(
+        """
+        SELECT swipe_events.timestamp, swipe_events.card_id, cards.bronco_id,
+               cards.name, cards.email, cards.designation,
+               swipe_events.station_id, swipe_events.station_name,
+               swipe_events.station_kind, swipe_events.action,
+               swipe_events.allowed, swipe_events.duration_seconds,
+               swipe_events.active_users, swipe_events.warning,
+               swipe_events.details, swipe_events.event_id
+        FROM swipe_events
+        LEFT JOIN cards ON cards.card_id = swipe_events.card_id
+        ORDER BY swipe_events.id
+        """
+    ).fetchall()
+    add_workbook_sheet(
+        workbook, "Swipe Log",
+        ["timestamp", "card_id", "bronco_id", "name", "email", "designation", "station_id", "station_name", "station_kind", "action", "allowed", "duration_seconds", "active_users", "warning", "details", "event_id"],
+        swipe_rows,
+    )
+
+    audit_rows = conn.execute(
+        """
+        SELECT timestamp, actor_card_id, actor_name, actor_role, action,
+               target_type, target_id, details
+        FROM audit_log ORDER BY id
+        """
+    ).fetchall()
+    add_workbook_sheet(
+        workbook, "Audit Log",
+        ["timestamp", "actor_card_id", "actor_name", "actor_role", "action", "target_type", "target_id", "details"],
+        audit_rows,
+    )
+
+    analytics = analytics_snapshot(conn, days=30)
+    add_workbook_sheet(
+        workbook, "Station Analytics",
+        ["station_id", "station_name", "sessions", "total_seconds", "average_seconds", "unique_users", "active_now"],
+        analytics["station_usage"],
+    )
+    add_workbook_sheet(
+        workbook, "After Hours",
+        ["card_id", "name", "email", "role", "visits", "outside_seconds", "last_seen_at"],
+        analytics["after_hours_people"],
+    )
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
+
+
 def csv_reply(filename, headers, rows):
     def safe_cell(value):
         if not isinstance(value, str):
@@ -4132,9 +4605,59 @@ def csv_reply(filename, headers, rows):
     )
 
 
+@app.get("/api/analytics")
+def analytics_api():
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    try:
+        days = int(request.args.get("days", "30"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "days must be 0, 7, 30, or 90"}), 400
+    if days not in (0, 7, 30, 90):
+        return jsonify({"ok": False, "error": "days must be 0, 7, 30, or 90"}), 400
+
+    with db_lock:
+        conn = db_connect()
+        analytics = analytics_snapshot(conn, days=days)
+        conn.close()
+    return jsonify({"ok": True, "analytics": analytics})
+
+
+@app.get("/master-export.xlsx")
+def master_workbook_export():
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        add_audit_log(
+            conn,
+            account,
+            "master_workbook_exported",
+            "export",
+            "master-export.xlsx",
+        )
+        conn.commit()
+        workbook = build_master_workbook(conn)
+        conn.close()
+
+    filename = f"station-master-{local_space_time().date().isoformat()}.xlsx"
+    return Response(
+        workbook.getvalue(),
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/swipes.csv")
 def swipes_csv():
-    role, error = require_access("staff")
+    role, error = require_access("admin")
     if error:
         return error
 
@@ -4190,20 +4713,19 @@ def swipes_csv():
 
 @app.get("/cards.csv")
 def cards_csv():
-    role, error = require_access("staff")
+    role, error = require_access("admin")
     if error:
         return error
 
     account = account_for_token(token_from_request())
-    include_sensitive = role == "admin"
     with db_lock:
         conn = db_connect()
         add_audit_log(conn, account, "card_database_exported", "export", "cards.csv")
         conn.commit()
         rows = card_rows(
             conn,
-            include_accounts=include_sensitive,
-            include_bronco_id=include_sensitive,
+            include_accounts=True,
+            include_bronco_id=True,
         )
         conn.close()
 
@@ -4216,9 +4738,8 @@ def cards_csv():
         "notes",
         "updated_at",
     ]
-    if include_sensitive:
-        headers[1:1] = ["bronco_id"]
-        headers.extend(["login_username", "login_role", "login_active"])
+    headers[1:1] = ["bronco_id"]
+    headers.extend(["login_username", "login_role", "login_active"])
 
     return csv_reply("cards.csv", headers, rows)
 
@@ -4266,7 +4787,7 @@ def audit_csv():
 
 @app.get("/active.csv")
 def active_csv():
-    role, error = require_access("staff")
+    role, error = require_access("admin")
     if error:
         return error
 
@@ -4294,16 +4815,15 @@ def active_csv():
 
 @app.get("/station_status.csv")
 def station_status_csv():
+    role, error = require_access("admin")
+    if error:
+        return error
+
     account = account_for_token(token_from_request())
-    role = normalize_access_role(account["role"]) if account else ""
-    include_people = role in ("admin", "staff")
     with db_lock:
         conn = db_connect()
         rows = station_status_rows(conn)
         conn.close()
-
-    if not include_people:
-        rows = [{**row, "active_cards": ""} for row in rows]
 
     headers = ["station_id", "station_name", "active_sessions", "active_cards"]
     return csv_reply("station_status.csv", headers, rows)

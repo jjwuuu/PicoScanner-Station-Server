@@ -16,10 +16,10 @@ from offline_queue import OfflineQueue
 
 
 # Edit these for your hotspot and Pi server.
-WIFI_SSID = "MS"
-WIFI_PASSWORD = "Ms2019!!"
+WIFI_SSID = "replace-with-hotspot-ssid"
+WIFI_PASSWORD = "replace-with-hotspot-password"
 SERVER_URL = "http://192.168.1.60:5000/swipe"
-STATION_API_KEY = "key"
+STATION_API_KEY = "replace-with-station-api-key"
 
 # Front entrance reader.
 DOOR_ID = "front-door"

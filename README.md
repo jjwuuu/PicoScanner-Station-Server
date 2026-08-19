@@ -7,8 +7,11 @@ PicoScanner is an RFID check-in system for makerspaces and similar shared spaces
 - Tracks entry and exit through doors.
 - Tracks active use of equipment stations without changing the building count.
 - Requires active card records and station certifications where configured.
+- Limits regular User entry to opening hours (12:00 PM-5:00 PM by default).
+- Allows Admin, Staff, and Volunteer accounts to enter after hours.
 - Automatically closes a station session when a person exits the building.
 - Records swipe history and administrative actions for reporting.
+- Provides Admin-only live usage analytics and Excel/CSV exports.
 
 ## Project layout
 
@@ -33,6 +36,9 @@ Set secure credentials before starting the server:
 export STATION_API_KEY='replace-with-one-shared-reader-key'
 export STATION_BOOTSTRAP_ADMIN_CARD_ID='your-admin-card-id'
 export STATION_BOOTSTRAP_ADMIN_PASSWORD='choose-a-strong-password'
+export STATION_TIMEZONE='America/Los_Angeles'
+export STATION_OPENING_HOUR='12'
+export STATION_CLOSING_HOUR='17'
 python app.py
 ```
 
@@ -68,28 +74,23 @@ STATION_KIND = "station"  # use "door" for doors
 
 Every reader must use the same `STATION_API_KEY` configured on the server. Each station ID must match an entry in `config.json`.
 
-## Data and exports
+## Opening hours
 
-The server stores its SQLite database beside `app.py`. The dashboard can export CSV data for reporting:
+Regular User cards can enter from 12:00 PM up to 5:00 PM. Admin, Staff, and Volunteer accounts can enter outside that window. Exits are always allowed. Change the hours with `STATION_OPENING_HOUR` and `STATION_CLOSING_HOUR`; both use 24-hour whole-hour values.
+
+## Analytics and exports
+
+The Admin tab shows live station rankings, total usage time, completed sessions, unique station users, busiest times, and authorized after-hours activity. Choose a 7, 30, or 90-day range, or all time. The view refreshes automatically while open.
+
+The server stores its SQLite database beside `app.py`. Admins can download a master Excel workbook with separate People, Certifications, Cards, Pending Canvas, Swipe Log, Audit Log, Station Analytics, and After Hours sheets. Individual CSV exports remain available for focused reporting:
 
 - `/swipes.csv` — swipe history
 - `/active.csv` — people currently inside
 - `/station_status.csv` — current station use
 - `/audit.csv` — administrative audit history
 
-Exports that contain protected information require an authorized dashboard session.
-
-## Test data
-
-With the server running:
-
-```bash
-cd "Code/Pi 3"
-source venv/bin/activate
-python send_test_data.py http://127.0.0.1:5000
-```
-
-This sends sample door and station activity, including a mismatch scenario for validating incident handling.
+Only Admin sessions can export CSV data from the site.
+The master workbook is a reporting snapshot. Continue using the original wide Canvas CSV for Canvas imports.
 
 ## Production notes
 
