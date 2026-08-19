@@ -641,7 +641,12 @@ class StationServerTests(unittest.TestCase):
             "/api/analytics?days=30", headers=self.auth(self.admin_token)
         )
         self.assertEqual(analytics.status_code, 200)
-        self.assertIn("station_usage", analytics.get_json()["analytics"])
+        analytics_data = analytics.get_json()["analytics"]
+        self.assertIn("station_usage", analytics_data)
+        self.assertEqual(len(analytics_data["hourly_activity"]), 24)
+        self.assertEqual(len(analytics_data["weekday_activity"]), 7)
+        self.assertGreaterEqual(analytics_data["summary"]["visitor_entries"], 1)
+        self.assertNotIn("after_hours_people", analytics_data)
         self.assertEqual(
             self.client.get(
                 "/api/analytics?days=30", headers=self.auth(staff_token)

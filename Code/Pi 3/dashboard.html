@@ -461,7 +461,7 @@
 
     .analytics-summary {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: var(--space-3);
       margin-bottom: var(--space-4);
     }
@@ -480,6 +480,7 @@
     .analytics-metric:nth-child(3) { border-top-color: var(--cyan); }
     .analytics-metric:nth-child(4) { border-top-color: var(--amber); }
     .analytics-metric:nth-child(5) { border-top-color: var(--red); }
+    .analytics-metric:nth-child(6) { border-top-color: var(--green); }
 
     .analytics-metric span {
       display: block;
@@ -561,7 +562,7 @@
     }
 
     .chart-fill.sessions { background: var(--green); }
-    .chart-fill.after-hours { background: var(--amber); }
+    .chart-fill.traffic { background: var(--amber); }
 
     .chart-value {
       min-width: 72px;
@@ -1788,8 +1789,9 @@
             <div class="analytics-metric"><span>Total Station Time</span><strong id="analytics-total-time">--</strong></div>
             <div class="analytics-metric"><span>Completed Sessions</span><strong id="analytics-session-count">--</strong></div>
             <div class="analytics-metric"><span>Unique Station Users</span><strong id="analytics-unique-users">--</strong></div>
+            <div class="analytics-metric"><span>Visitor Entries</span><strong id="analytics-visitor-entries">--</strong></div>
             <div class="analytics-metric"><span>Most Used Station</span><strong id="analytics-top-station">--</strong></div>
-            <div class="analytics-metric"><span>Authorized After Hours</span><strong id="analytics-after-hours">--</strong></div>
+            <div class="analytics-metric"><span>Busiest Station Time</span><strong id="analytics-busiest-hour">--</strong></div>
           </div>
 
           <div class="analytics-charts">
@@ -1801,28 +1803,23 @@
               <h3>Station Sessions</h3>
               <div id="station-session-chart" class="chart-list"></div>
             </section>
-            <section class="panel analytics-chart full-row">
-              <h3>Authorized After-Hours Activity</h3>
-              <div id="after-hours-chart" class="chart-list"></div>
+            <section class="panel analytics-chart">
+              <h3>Station Starts by Hour</h3>
+              <div id="hourly-usage-chart" class="chart-list"></div>
+            </section>
+            <section class="panel analytics-chart">
+              <h3>Station Starts by Day</h3>
+              <div id="weekday-usage-chart" class="chart-list"></div>
             </section>
           </div>
 
           <div class="analytics-charts">
-            <section class="panel">
+            <section class="panel analytics-chart full-row">
               <h2>Station Details</h2>
               <div class="table-scroll">
                 <table>
                   <thead><tr><th>Station</th><th>Sessions</th><th>Total Time</th><th>Average</th><th>Users</th><th>Active</th></tr></thead>
                   <tbody id="analytics-stations-body"></tbody>
-                </table>
-              </div>
-            </section>
-            <section class="panel">
-              <h2>After-Hours People</h2>
-              <div class="table-scroll">
-                <table>
-                  <thead><tr><th>Person</th><th>Role</th><th>Visits</th><th>Time</th><th>Last Visit</th></tr></thead>
-                  <tbody id="analytics-after-hours-body"></tbody>
                 </table>
               </div>
             </section>
@@ -2117,13 +2114,14 @@
     const analyticsTotalTime = document.getElementById("analytics-total-time");
     const analyticsSessionCount = document.getElementById("analytics-session-count");
     const analyticsUniqueUsers = document.getElementById("analytics-unique-users");
+    const analyticsVisitorEntries = document.getElementById("analytics-visitor-entries");
     const analyticsTopStation = document.getElementById("analytics-top-station");
-    const analyticsAfterHours = document.getElementById("analytics-after-hours");
+    const analyticsBusiestHour = document.getElementById("analytics-busiest-hour");
     const stationTimeChart = document.getElementById("station-time-chart");
     const stationSessionChart = document.getElementById("station-session-chart");
-    const afterHoursChart = document.getElementById("after-hours-chart");
+    const hourlyUsageChart = document.getElementById("hourly-usage-chart");
+    const weekdayUsageChart = document.getElementById("weekday-usage-chart");
     const analyticsStationsBody = document.getElementById("analytics-stations-body");
-    const analyticsAfterHoursBody = document.getElementById("analytics-after-hours-body");
     const peopleBody = document.getElementById("people-body");
     const stationsBody = document.getElementById("stations-body");
     const sessionsBody = document.getElementById("sessions-body");
@@ -3759,7 +3757,9 @@
       container.innerHTML = rows.length
         ? rows.map(row => {
             const value = Number(row[valueKey]) || 0;
-            const width = maximum ? Math.max(1, (value / maximum) * 100) : 0;
+            const width = value > 0 && maximum
+              ? Math.max(1, (value / maximum) * 100)
+              : 0;
             return `
               <div class="chart-row">
                 <span class="chart-label">${escapeHtml(row.label)}</span>
@@ -3779,7 +3779,6 @@
       if (!analytics) {
         analyticsStatus.textContent = "Loading usage data...";
         analyticsStationsBody.innerHTML = loadingRow(6);
-        analyticsAfterHoursBody.innerHTML = loadingRow(5);
         return;
       }
 
@@ -3787,8 +3786,9 @@
       analyticsTotalTime.textContent = formatDuration(summary.total_usage_seconds || 0);
       analyticsSessionCount.textContent = Number(summary.completed_sessions || 0).toLocaleString();
       analyticsUniqueUsers.textContent = Number(summary.unique_users || 0).toLocaleString();
+      analyticsVisitorEntries.textContent = Number(summary.visitor_entries || 0).toLocaleString();
       analyticsTopStation.textContent = summary.busiest_station || "--";
-      analyticsAfterHours.textContent = formatDuration(summary.after_hours_seconds || 0);
+      analyticsBusiestHour.textContent = summary.busiest_hour || "--";
       analyticsStatus.textContent = [
         analytics.period_label,
         `Open hours ${analytics.opening_hours}`,
@@ -3812,13 +3812,24 @@
         "sessions"
       );
 
-      const afterHoursPeople = analytics.after_hours_people || [];
+      const hourlyActivity = (analytics.hourly_activity || [])
+        .filter(row => Number(row.station_starts || 0) > 0);
       renderBarChart(
-        afterHoursChart,
-        afterHoursPeople.map(row => ({ label: row.name, outside_seconds: row.outside_seconds })),
-        "outside_seconds",
-        formatDuration,
-        "after-hours"
+        hourlyUsageChart,
+        hourlyActivity,
+        "station_starts",
+        value => `${Number(value).toLocaleString()} start${Number(value) === 1 ? "" : "s"}`,
+        "traffic"
+      );
+
+      const weekdayActivity = (analytics.weekday_activity || [])
+        .filter(row => Number(row.station_starts || 0) > 0);
+      renderBarChart(
+        weekdayUsageChart,
+        weekdayActivity,
+        "station_starts",
+        value => `${Number(value).toLocaleString()} start${Number(value) === 1 ? "" : "s"}`,
+        "sessions"
       );
 
       analyticsStationsBody.innerHTML = stations.length
@@ -3833,18 +3844,6 @@
             </tr>
           `).join("")
         : emptyRow(6, "No stations configured");
-
-      analyticsAfterHoursBody.innerHTML = afterHoursPeople.length
-        ? afterHoursPeople.map(row => `
-            <tr>
-              <td><strong>${escapeHtml(row.name)}</strong><br><span class="subtle">${escapeHtml(row.email || "")}</span></td>
-              <td><span class="badge ok">${escapeHtml(row.role)}</span></td>
-              <td>${Number(row.visits || 0).toLocaleString()}</td>
-              <td>${formatDuration(row.outside_seconds)}</td>
-              <td>${formatDateTime(row.last_seen_at)}</td>
-            </tr>
-          `).join("")
-        : emptyRow(5, "No authorized after-hours visits in this date range");
     }
 
     function renderAdmin() {

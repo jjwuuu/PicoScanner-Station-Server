@@ -172,15 +172,14 @@ def seed_demo_data(conn):
             sequence += 1
             completed_sessions += 1
 
-    # These visits cross the configured opening-hours boundary and populate the
-    # authorized after-hours Staff/Volunteer charts.
-    after_hours_visits = (
+    # Door visits at varied times populate visitor-entry totals and time trends.
+    door_visits = (
         ("DEMO-ANALYTICS-STAFF", 2, 16, 30, 180),
         ("DEMO-ANALYTICS-STAFF", 9, 15, 30, 240),
         ("DEMO-ANALYTICS-VOLUNTEER", 4, 9, 0, 180),
         ("DEMO-ANALYTICS-VOLUNTEER", 13, 16, 0, 150),
     )
-    for card_id, days_ago, start_hour, start_minute, duration_minutes in after_hours_visits:
+    for card_id, days_ago, start_hour, start_minute, duration_minutes in door_visits:
         started_at = recent_local_time(days_ago, start_hour, start_minute)
         ended_at = started_at + timedelta(minutes=duration_minutes)
         add_event(

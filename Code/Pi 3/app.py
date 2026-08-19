@@ -169,47 +169,6 @@ def after_hours_access_role(conn, card_id):
     return designation if designation in ("staff", "volunteer") else ""
 
 
-def outside_open_hours_seconds(start_utc, end_utc):
-    if end_utc <= start_utc:
-        return 0
-    if OPENING_HOUR == CLOSING_HOUR:
-        return 0
-
-    total_seconds = int((end_utc - start_utc).total_seconds())
-    inside_seconds = 0
-    local_start = local_space_time(start_utc)
-    local_end = local_space_time(end_utc)
-    current_date = local_start.date()
-    final_date = local_end.date()
-
-    while current_date <= final_date:
-        day_start = datetime.combine(
-            current_date,
-            datetime.min.time(),
-            tzinfo=SPACE_TIMEZONE,
-        )
-        if OPENING_HOUR < CLOSING_HOUR:
-            open_start = day_start + timedelta(hours=OPENING_HOUR)
-            open_end = day_start + timedelta(hours=CLOSING_HOUR)
-            overlap_start = max(start_utc, open_start.astimezone(timezone.utc))
-            overlap_end = min(end_utc, open_end.astimezone(timezone.utc))
-            if overlap_end > overlap_start:
-                inside_seconds += int((overlap_end - overlap_start).total_seconds())
-        else:
-            open_ranges = (
-                (day_start, day_start + timedelta(hours=CLOSING_HOUR)),
-                (day_start + timedelta(hours=OPENING_HOUR), day_start + timedelta(days=1)),
-            )
-            for open_start, open_end in open_ranges:
-                overlap_start = max(start_utc, open_start.astimezone(timezone.utc))
-                overlap_end = min(end_utc, open_end.astimezone(timezone.utc))
-                if overlap_end > overlap_start:
-                    inside_seconds += int((overlap_end - overlap_start).total_seconds())
-        current_date += timedelta(days=1)
-
-    return max(0, total_seconds - inside_seconds)
-
-
 def normalize_access_role(value):
     text = str(value or "").strip().lower()
     return text if text in ROLE_LEVELS else ""
@@ -4514,89 +4473,84 @@ def analytics_snapshot(conn, days=30, current_time=None):
         )
     )
 
-    outside_query = """
-        SELECT
-            swipe_events.card_id,
-            cards.name,
-            cards.email,
-            cards.designation,
-            user_accounts.role AS login_role,
-            user_accounts.active AS login_active,
-            swipe_events.timestamp,
-            swipe_events.duration_seconds
+    station_hour_counts = [0] * 24
+    arrival_hour_counts = [0] * 24
+    station_weekday_counts = [0] * 7
+    arrival_weekday_counts = [0] * 7
+    visitor_entries = 0
+    unique_visitors = set()
+    activity_query = """
+        SELECT timestamp, card_id, station_kind, action
         FROM swipe_events
-        JOIN cards ON cards.card_id = swipe_events.card_id
-        LEFT JOIN user_accounts ON user_accounts.card_id = cards.card_id
-        WHERE swipe_events.station_kind = 'door'
-          AND swipe_events.action = 'exit'
-          AND swipe_events.allowed = 1
-          AND swipe_events.duration_seconds IS NOT NULL
+        WHERE allowed = 1
+          AND (
+            (station_kind = 'station' AND action = 'station_in')
+            OR (station_kind = 'door' AND action = 'enter')
+          )
     """
-    outside_params = []
+    activity_params = []
     if cutoff_iso:
-        outside_query += " AND swipe_events.timestamp >= ?"
-        outside_params.append(cutoff_iso)
-
-    after_hours_people = {}
-    for row in conn.execute(outside_query, outside_params).fetchall():
-        login_role = normalize_access_role(row["login_role"]) if row["login_active"] else ""
-        designation_role = normalize_access_role(row["designation"])
-        access_role = login_role or (
-            designation_role if designation_role in ("staff", "volunteer") else ""
-        )
-        if access_role not in ("admin", "staff", "volunteer"):
-            continue
-
+        activity_query += " AND timestamp >= ?"
+        activity_params.append(cutoff_iso)
+    for row in conn.execute(activity_query, activity_params).fetchall():
         try:
-            ended_at = parse_iso(row["timestamp"])
+            local_time = local_space_time(parse_iso(row["timestamp"]))
         except (TypeError, ValueError, OverflowError):
             continue
-        started_at = ended_at - timedelta(seconds=max(0, row["duration_seconds"] or 0))
-        outside_seconds = outside_open_hours_seconds(started_at, ended_at)
-        if not outside_seconds:
-            continue
+        if row["station_kind"] == "station":
+            station_hour_counts[local_time.hour] += 1
+            station_weekday_counts[local_time.weekday()] += 1
+        else:
+            arrival_hour_counts[local_time.hour] += 1
+            arrival_weekday_counts[local_time.weekday()] += 1
+            visitor_entries += 1
+            unique_visitors.add(row["card_id"])
 
-        item = after_hours_people.setdefault(
-            row["card_id"],
-            {
-                "card_id": row["card_id"],
-                "name": row["name"] or row["card_id"],
-                "email": row["email"] or "",
-                "role": role_label(access_role),
-                "visits": 0,
-                "outside_seconds": 0,
-                "last_seen_at": "",
-            },
-        )
-        item["visits"] += 1
-        item["outside_seconds"] += outside_seconds
-        if row["timestamp"] > item["last_seen_at"]:
-            item["last_seen_at"] = row["timestamp"]
-
-    after_hours_rows = sorted(
-        after_hours_people.values(),
-        key=lambda item: (-item["outside_seconds"], item["name"].lower()),
+    weekday_names = (
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
     )
-
-    hour_counts = [0] * 24
-    hour_query = """
-        SELECT timestamp FROM swipe_events
-        WHERE station_kind = 'station' AND action = 'station_in' AND allowed = 1
-    """
-    hour_params = []
-    if cutoff_iso:
-        hour_query += " AND timestamp >= ?"
-        hour_params.append(cutoff_iso)
-    for row in conn.execute(hour_query, hour_params).fetchall():
-        try:
-            hour_counts[local_space_time(parse_iso(row["timestamp"])).hour] += 1
-        except (TypeError, ValueError, OverflowError):
-            continue
-    busiest_hour = max(range(24), key=hour_counts.__getitem__) if any(hour_counts) else None
+    hourly_activity = [
+        {
+            "hour": hour,
+            "label": display_hour(hour),
+            "station_starts": station_hour_counts[hour],
+            "visitor_entries": arrival_hour_counts[hour],
+        }
+        for hour in range(24)
+    ]
+    weekday_activity = [
+        {
+            "weekday": weekday,
+            "label": weekday_names[weekday],
+            "station_starts": station_weekday_counts[weekday],
+            "visitor_entries": arrival_weekday_counts[weekday],
+        }
+        for weekday in range(7)
+    ]
+    busiest_station_hour = (
+        max(range(24), key=station_hour_counts.__getitem__)
+        if any(station_hour_counts)
+        else None
+    )
+    busiest_arrival_hour = (
+        max(range(24), key=arrival_hour_counts.__getitem__)
+        if any(arrival_hour_counts)
+        else None
+    )
+    busiest_weekday = (
+        max(range(7), key=station_weekday_counts.__getitem__)
+        if any(station_weekday_counts)
+        else None
+    )
 
     total_sessions = sum(item["sessions"] for item in usage_rows)
     total_usage_seconds = sum(item["total_seconds"] for item in usage_rows)
-    total_after_hours = sum(item["outside_seconds"] for item in after_hours_rows)
     top_station = next((item for item in usage_rows if item["sessions"]), None)
     return {
         "generated_at": current_time.replace(microsecond=0).isoformat(),
@@ -4609,13 +4563,28 @@ def analytics_snapshot(conn, days=30, current_time=None):
             "completed_sessions": total_sessions,
             "total_usage_seconds": total_usage_seconds,
             "unique_users": len(all_unique_cards),
+            "visitor_entries": visitor_entries,
+            "unique_visitors": len(unique_visitors),
             "busiest_station": top_station["station_name"] if top_station else "--",
-            "busiest_hour": display_hour(busiest_hour) if busiest_hour is not None else "--",
-            "after_hours_seconds": total_after_hours,
-            "after_hours_people": len(after_hours_rows),
+            "busiest_hour": (
+                display_hour(busiest_station_hour)
+                if busiest_station_hour is not None
+                else "--"
+            ),
+            "busiest_arrival_hour": (
+                display_hour(busiest_arrival_hour)
+                if busiest_arrival_hour is not None
+                else "--"
+            ),
+            "busiest_weekday": (
+                weekday_names[busiest_weekday]
+                if busiest_weekday is not None
+                else "--"
+            ),
         },
         "station_usage": usage_rows,
-        "after_hours_people": after_hours_rows,
+        "hourly_activity": hourly_activity,
+        "weekday_activity": weekday_activity,
     }
 
 
@@ -4764,9 +4733,14 @@ def build_master_workbook(conn):
         analytics["station_usage"],
     )
     add_workbook_sheet(
-        workbook, "After Hours",
-        ["card_id", "name", "email", "role", "visits", "outside_seconds", "last_seen_at"],
-        analytics["after_hours_people"],
+        workbook, "Hourly Activity",
+        ["hour", "label", "station_starts", "visitor_entries"],
+        analytics["hourly_activity"],
+    )
+    add_workbook_sheet(
+        workbook, "Weekday Activity",
+        ["weekday", "label", "station_starts", "visitor_entries"],
+        analytics["weekday_activity"],
     )
 
     output = io.BytesIO()
