@@ -26,7 +26,7 @@ print("Server URL:", SERVER_URL)
 
 # Sewing station reader.
 STATION_ID = "sewing"
-STATION_NAME = "Sewing Training"
+STATION_NAME = "Sewing Station"
 STATION_KIND = "station"
 
 # Hardware pins. These match the newer wiring in test.py.
