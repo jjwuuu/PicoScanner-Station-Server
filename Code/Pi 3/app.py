@@ -1602,7 +1602,7 @@ def active_cert_mode(station_id):
     return mode
 
 
-def start_pending_cert_mode(station_id, grantor):
+def start_pending_cert_mode(station_id, grantor, grantor_session_id=None):
     current_time = time.time()
     cert_modes[station_id] = {
         "grantor_card_id": grantor["card_id"],
@@ -1611,12 +1611,20 @@ def start_pending_cert_mode(station_id, grantor):
         "expires_at": 0,
         "arm_state": "pending_second_swipe",
         "first_swipe_expires_at": current_time + CERT_CONFIRM_SECONDS,
+        "grantor_session_id": grantor_session_id,
     }
     return cert_modes[station_id]
 
 
-def arm_cert_mode(station_id, grantor):
+def arm_cert_mode(station_id, grantor, grantor_session_id=None):
     current_time = time.time()
+    previous_mode = cert_modes.get(station_id)
+    if (
+        grantor_session_id is None
+        and previous_mode
+        and previous_mode.get("grantor_card_id") == grantor["card_id"]
+    ):
+        grantor_session_id = previous_mode.get("grantor_session_id")
     cert_modes[station_id] = {
         "grantor_card_id": grantor["card_id"],
         "grantor_name": grantor["name"] or grantor["card_id"],
@@ -1624,6 +1632,7 @@ def arm_cert_mode(station_id, grantor):
         "expires_at": current_time + CERT_MODE_SECONDS,
         "arm_state": "armed",
         "first_swipe_expires_at": 0,
+        "grantor_session_id": grantor_session_id,
     }
     return cert_modes[station_id]
 
@@ -1997,6 +2006,60 @@ def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
         (card_id, station_id),
     ).fetchone()
 
+    mode = active_cert_mode(station_id) if requires_certification else None
+    if mode and mode["arm_state"] == "pending_second_swipe":
+        if card_id != mode["grantor_card_id"]:
+            cert_modes.pop(station_id, None)
+            mode = None
+            skip_cert_mode_for_this_swipe = True
+        elif (
+            active_session
+            and mode.get("grantor_session_id") == active_session["id"]
+        ):
+            grantor = certifier_account_for_card(conn, card_id, station_id)
+            if grantor:
+                mode = arm_cert_mode(
+                    station_id,
+                    grantor,
+                    active_session["id"],
+                )
+                return cert_mode_response(
+                    conn,
+                    card_id,
+                    station,
+                    "cert_mode_armed",
+                    "cert_mode_armed",
+                    mode,
+                    event_id,
+                )
+            cert_modes.pop(station_id, None)
+            mode = None
+    elif (
+        mode
+        and mode["arm_state"] == "armed"
+        and card_id == mode["grantor_card_id"]
+        and active_session
+        and mode.get("grantor_session_id") == active_session["id"]
+    ):
+        grantor = certifier_account_for_card(conn, card_id, station_id)
+        if grantor:
+            mode = arm_cert_mode(
+                station_id,
+                grantor,
+                active_session["id"],
+            )
+            return cert_mode_response(
+                conn,
+                card_id,
+                station,
+                "cert_mode_armed",
+                "cert_mode_armed",
+                mode,
+                event_id,
+            )
+        cert_modes.pop(station_id, None)
+        mode = None
+
     if active_session:
         ended_at = datetime.now(timezone.utc).replace(microsecond=0)
         started_at = active_session["started_at"]
@@ -2097,23 +2160,12 @@ def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
                 event_id,
             )
 
-        if grantor:
-            mode = start_pending_cert_mode(station_id, grantor)
-            return cert_mode_response(
-                conn,
-                card_id,
-                station,
-                "cert_mode_pending",
-                "cert_mode_pending",
-                mode,
-                event_id,
-            )
-
     override_active = override_is_effective(station)
 
     if (
         requires_certification
         and not override_active
+        and not grantor
         and not is_certified(conn, card_id, station_id)
     ):
         return log_event(
@@ -2164,7 +2216,7 @@ def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
 
     warning, details = station_override_warning(station, warning, details)
 
-    conn.execute(
+    session_cursor = conn.execute(
         """
         INSERT INTO active_sessions (
             card_id, station_id, station_name, started_at
@@ -2174,7 +2226,7 @@ def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
         (card_id, station_id, station_name, now_iso()),
     )
 
-    return log_event(
+    result = log_event(
         conn,
         card_id,
         station_id,
@@ -2185,6 +2237,19 @@ def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
         details=details,
         event_id=event_id,
     )
+    if (
+        requires_certification
+        and grantor
+        and not skip_cert_mode_for_this_swipe
+    ):
+        mode = start_pending_cert_mode(
+            station_id,
+            grantor,
+            session_cursor.lastrowid,
+        )
+        result["led_signal"] = "cert_mode_pending"
+        result["cert_mode_expires_at"] = mode["first_swipe_expires_at"]
+    return result
 
 
 @app.post("/swipe")

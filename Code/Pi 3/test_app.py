@@ -689,6 +689,8 @@ class StationServerTests(unittest.TestCase):
         armed = self.swipe("admin-card", "soldering", "cert-armed").get_json()
         granted = self.swipe("trainee-card", "soldering", "cert-granted").get_json()
 
+        self.assertTrue(pending["allowed"])
+        self.assertEqual(pending["action"], "station_in")
         self.assertEqual(pending["led_signal"], "cert_mode_pending")
         self.assertEqual(armed["led_signal"], "cert_mode_armed")
         self.assertEqual(granted["led_signal"], "cert_success")
@@ -702,9 +704,63 @@ class StationServerTests(unittest.TestCase):
                 WHERE card_id = 'trainee-card' AND station_id = 'soldering'
                 """
             ).fetchone()
+            grantor_session_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM active_sessions
+                WHERE card_id = 'admin-card' AND station_id = 'soldering'
+                """
+            ).fetchone()[0]
         finally:
             conn.close()
         self.assertEqual(certification, (1, "swipe", "admin-card"))
+        self.assertEqual(grantor_session_count, 1)
+
+        checked_out = self.swipe(
+            "admin-card",
+            "soldering",
+            "cert-grantor-out",
+        ).get_json()
+        self.assertEqual(checked_out["action"], "station_out")
+
+    def test_authorized_staff_can_swipe_into_station(self):
+        self.create_card(
+            "trainer-card",
+            "B610",
+            "Staff Trainer",
+            "trainer@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            conn.execute(
+                """
+                INSERT INTO certify_permissions (card_id, station_id, updated_at)
+                VALUES ('trainer-card', 'soldering', ?)
+                """,
+                (self.server.now_iso(),),
+            )
+            conn.commit()
+            conn.close()
+
+        checked_in = self.swipe(
+            "trainer-card",
+            "soldering",
+            "trainer-in",
+        ).get_json()
+        self.assertTrue(checked_in["allowed"])
+        self.assertEqual(checked_in["action"], "station_in")
+        self.assertEqual(checked_in["led_signal"], "cert_mode_pending")
+
+        mode = self.server.cert_modes["soldering"]
+        mode["first_swipe_expires_at"] = 0
+        checked_out = self.swipe(
+            "trainer-card",
+            "soldering",
+            "trainer-out",
+        ).get_json()
+        self.assertEqual(checked_out["action"], "station_out")
 
     def test_canvas_tsv_import_and_card_assignment(self):
         headings = [
