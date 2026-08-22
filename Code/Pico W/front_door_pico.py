@@ -143,7 +143,7 @@ def send_swipe(card_id):
     if urequests is None:
         print("urequests is not installed")
         blink("purple", 4)
-        return None
+        return {"led_signal": "server_error", "error": "urequests is not installed"}
 
     data = {
         "card_id": str(card_id),
@@ -154,15 +154,21 @@ def send_swipe(card_id):
     }
 
     try:
+        print("Sending swipe to:", SERVER_URL)
         result = post_event(data)
         print("Server response:", result)
+        if not result.get("ok", False):
+            result["led_signal"] = "server_error"
         return result
     except Exception as error:
-        print("Server error:", error)
+        print("Server error:", repr(error))
         pending = queue.add(data)
         print("Swipe queued; pending:", pending)
-        blink("purple", 2)
-        return {"queued": True}
+        return {
+            "led_signal": "server_error",
+            "queued": True,
+            "error": "Swipe queued for retry",
+        }
 
 
 def read_card_and_send(reads=6, required_hits=2):
@@ -192,6 +198,10 @@ def show_result(result):
         return
 
     signal = result.get("led_signal", "")
+    if signal == "server_error" or result.get("queued"):
+        blink("purple", 3)
+        return
+
     if signal == "access_denied":
         blink("red", 3)
         return
@@ -205,7 +215,8 @@ def show_result(result):
         set_led("cyan")
         time.sleep(1)
     else:
-        blink("red", 3)
+        print("Unexpected server result:", result)
+        blink("purple", 3)
 
 
 def wait_for_release():

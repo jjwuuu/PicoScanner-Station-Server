@@ -645,6 +645,13 @@ def init_db():
                 ignored_through_event_id INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS warning_dismissals (
+                swipe_event_id INTEGER PRIMARY KEY,
+                dismissed_at TEXT NOT NULL,
+                dismissed_by_card_id TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (swipe_event_id) REFERENCES swipe_events(id)
+            );
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -800,6 +807,12 @@ def init_db():
             """
             CREATE INDEX IF NOT EXISTS idx_swipe_events_pending_cards
             ON swipe_events(warning, card_id, id DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_warning_dismissals_event
+            ON warning_dismissals(swipe_event_id)
             """
         )
         conn.execute(
@@ -1677,8 +1690,9 @@ def log_event(
     warning="",
     details="",
     event_id="",
+    event_time=None,
 ):
-    event_time = now_iso()
+    event_time = event_time or now_iso()
     active_users = building_active_count(conn)
 
     conn.execute(
@@ -3270,7 +3284,6 @@ def save_card():
             if not existing_card:
                 name = linked_person["name"]
                 email = linked_person["email"]
-                designation = normalize_designation(linked_person["designation"])
                 notes = notes or linked_person["notes"]
                 active = 1 if linked_person["active"] else 0
 
@@ -3531,6 +3544,141 @@ def save_card():
             "people": people,
         }
     )
+
+
+@app.post("/api/active-people/<card_id>/checkout")
+def manual_checkout_person(card_id):
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    data = request_json()
+    try:
+        card_id = validate_text(card_id, "card_id", MAX_ID_LENGTH, required=True)
+        exited_at_value = validate_text(
+            data.get("exited_at"),
+            "exited_at",
+            64,
+            required=True,
+        )
+        exited_at = parse_iso(exited_at_value).replace(microsecond=0)
+    except (ValueError, TypeError) as error:
+        return jsonify({"ok": False, "error": f"Invalid checkout time: {error}"}), 400
+
+    if exited_at > datetime.now(timezone.utc).replace(microsecond=0):
+        return jsonify({"ok": False, "error": "Checkout time cannot be in the future"}), 400
+
+    with db_lock:
+        conn = db_connect()
+        active_person = conn.execute(
+            """
+            SELECT card_id, entered_at, entry_door_id, entry_door_name
+            FROM active_people
+            WHERE card_id = ?
+            """,
+            (card_id,),
+        ).fetchone()
+        if not active_person:
+            conn.close()
+            return jsonify({"ok": False, "error": "Person is not currently inside"}), 404
+
+        entered_at = parse_iso(active_person["entered_at"])
+        if exited_at < entered_at:
+            conn.close()
+            return jsonify(
+                {"ok": False, "error": "Checkout time cannot be before entry time"}
+            ), 400
+
+        card = card_row(conn, card_id)
+        open_sessions = active_station_sessions_for_card(conn, card_id)
+        conn.execute("DELETE FROM active_people WHERE card_id = ?", (card_id,))
+
+        for session in open_sessions:
+            conn.execute("DELETE FROM active_sessions WHERE id = ?", (session["id"],))
+            log_event(
+                conn,
+                card_id,
+                session["station_id"],
+                session["station_name"],
+                "station",
+                "station_auto_out",
+                duration_seconds=elapsed_seconds(session["started_at"], exited_at),
+                details="Closed during manual checkout",
+                event_time=exited_at.isoformat(),
+            )
+
+        exit_event = log_event(
+            conn,
+            card_id,
+            active_person["entry_door_id"],
+            active_person["entry_door_name"],
+            "door",
+            "manual_exit",
+            duration_seconds=elapsed_seconds(active_person["entered_at"], exited_at),
+            details="Manual checkout",
+            event_time=exited_at.isoformat(),
+        )
+        add_audit_log(
+            conn,
+            account,
+            "person_manually_checked_out",
+            "person",
+            card_id,
+            {
+                "name": card_display(card, card_id),
+                "entered_at": active_person["entered_at"],
+                "exited_at": exited_at.isoformat(),
+                "closed_station_sessions": len(open_sessions),
+            },
+        )
+        conn.commit()
+        conn.close()
+
+    return jsonify(
+        {
+            "ok": True,
+            "event": exit_event,
+            "closed_station_sessions": len(open_sessions),
+        }
+    )
+
+
+@app.post("/api/warnings/clear")
+def clear_warnings():
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO warning_dismissals (
+                swipe_event_id, dismissed_at, dismissed_by_card_id
+            )
+            SELECT id, ?, ?
+            FROM swipe_events
+            WHERE warning != ''
+              AND action != 'station_auto_out'
+            """,
+            (now_iso(), account_field(account, "card_id")),
+        )
+        dismissed_count = max(0, cursor.rowcount)
+        add_audit_log(
+            conn,
+            account,
+            "warnings_cleared",
+            "warning_feed",
+            "live",
+            {"dismissed_count": dismissed_count},
+        )
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True, "dismissed_count": dismissed_count})
+
 
 @app.delete("/api/cards/<card_id>")
 def delete_card(card_id):
@@ -4321,7 +4469,18 @@ def station_status_rows(conn):
         WHERE stations.kind = 'station'
           AND stations.dashboard_visible = 1
         GROUP BY stations.id, stations.name
-        ORDER BY stations.name
+        ORDER BY
+            COUNT(active_sessions.id) DESC,
+            CASE stations.id
+                WHEN '3d-printing' THEN 1
+                WHEN 'soldering' THEN 2
+                WHEN 'vinyl' THEN 3
+                WHEN 'laser-cutting' THEN 4
+                WHEN 'sewing' THEN 5
+                WHEN 'embroidery' THEN 6
+                ELSE 99
+            END,
+            stations.name
         """
     ).fetchall()
 
@@ -4441,7 +4600,11 @@ def warning_rows(conn, limit):
             swipe_events.details
         FROM swipe_events
         LEFT JOIN cards ON cards.card_id = swipe_events.card_id
-        WHERE warning != '' AND swipe_events.action != 'station_auto_out'
+        LEFT JOIN warning_dismissals
+            ON warning_dismissals.swipe_event_id = swipe_events.id
+        WHERE warning != ''
+          AND swipe_events.action != 'station_auto_out'
+          AND warning_dismissals.swipe_event_id IS NULL
         ORDER BY id DESC
         LIMIT ?
         """,

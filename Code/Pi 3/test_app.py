@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -64,6 +65,7 @@ class StationServerTests(unittest.TestCase):
                 "active_sessions",
                 "active_people",
                 "pending_card_dismissals",
+                "warning_dismissals",
                 "swipe_events",
                 "audit_log",
                 "cards",
@@ -762,6 +764,155 @@ class StationServerTests(unittest.TestCase):
         ).get_json()
         self.assertEqual(checked_out["action"], "station_out")
 
+    def test_staff_can_manually_checkout_person_and_close_station_sessions(self):
+        self.create_card("checkout-card", "B620", "Checkout User", "checkout@cpp.edu")
+        self.create_card(
+            "checkout-staff-card",
+            "B621",
+            "Checkout Staff",
+            "checkoutstaff@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        staff_token = self.login("checkoutstaff", "StaffPass123")
+        entered_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=30)
+        session_started_at = entered_at + timedelta(minutes=5)
+        exited_at = entered_at + timedelta(minutes=20)
+
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            conn.execute(
+                """
+                INSERT INTO active_people (card_id, entered_at, entry_door_id, entry_door_name)
+                VALUES (?, ?, 'front-door', 'Front Door')
+                """,
+                ("checkout-card", entered_at.isoformat()),
+            )
+            conn.execute(
+                """
+                INSERT INTO active_sessions (card_id, station_id, station_name, started_at)
+                VALUES (?, 'soldering', 'Soldering', ?)
+                """,
+                ("checkout-card", session_started_at.isoformat()),
+            )
+            conn.commit()
+            conn.close()
+
+        response = self.client.post(
+            "/api/active-people/checkout-card/checkout",
+            headers=self.auth(staff_token),
+            json={"exited_at": exited_at.isoformat()},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["closed_station_sessions"], 1)
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM active_people WHERE card_id = 'checkout-card'"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM active_sessions WHERE card_id = 'checkout-card'"
+                ).fetchone()[0],
+                0,
+            )
+            events = conn.execute(
+                """
+                SELECT action, duration_seconds, timestamp
+                FROM swipe_events
+                WHERE card_id = 'checkout-card'
+                ORDER BY id
+                """
+            ).fetchall()
+            audit_action = conn.execute(
+                """
+                SELECT action FROM audit_log
+                WHERE target_id = 'checkout-card'
+                ORDER BY id DESC LIMIT 1
+                """
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        self.assertEqual(
+            events,
+            [
+                ("station_auto_out", 900, exited_at.isoformat()),
+                ("manual_exit", 1200, exited_at.isoformat()),
+            ],
+        )
+        self.assertEqual(audit_action, "person_manually_checked_out")
+
+    def test_staff_can_clear_live_warnings_without_deleting_swipe_history(self):
+        self.create_card(
+            "warning-staff-card",
+            "B622",
+            "Warning Staff",
+            "warningstaff@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        staff_token = self.login("warningstaff", "StaffPass123")
+        warning_swipe = self.swipe("unknown-warning-card", "front-door", "warning-1")
+        self.assertFalse(warning_swipe.get_json()["allowed"])
+
+        before = self.client.get(
+            "/api/dashboard", headers=self.auth(staff_token)
+        ).get_json()
+        self.assertEqual(len(before["warnings"]), 1)
+
+        cleared = self.client.post(
+            "/api/warnings/clear", headers=self.auth(staff_token), json={}
+        )
+        self.assertEqual(cleared.status_code, 200, cleared.get_data(as_text=True))
+        self.assertEqual(cleared.get_json()["dismissed_count"], 1)
+
+        after = self.client.get(
+            "/api/dashboard", headers=self.auth(staff_token)
+        ).get_json()
+        self.assertEqual(after["warnings"], [])
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            swipe_count = conn.execute(
+                "SELECT COUNT(*) FROM swipe_events WHERE card_id = 'unknown-warning-card'"
+            ).fetchone()[0]
+            audit_action = conn.execute(
+                "SELECT action FROM audit_log ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(swipe_count, 1)
+        self.assertEqual(audit_action, "warnings_cleared")
+
+    def test_station_usage_sorts_active_counts_then_default_display_order(self):
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            conn.executemany(
+                """
+                INSERT INTO active_sessions (card_id, station_id, station_name, started_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    ("usage-1", "soldering", "Soldering", self.server.now_iso()),
+                    ("usage-2", "soldering", "Soldering", self.server.now_iso()),
+                    ("usage-3", "embroidery", "Embroidery", self.server.now_iso()),
+                ],
+            )
+            rows = self.server.station_status_rows(conn)
+            conn.close()
+
+        self.assertEqual(
+            [row["station_id"] for row in rows[:3]],
+            ["soldering", "embroidery", "3d-printing"],
+        )
+
     def test_canvas_tsv_import_and_card_assignment(self):
         headings = [
             "Email",
@@ -808,12 +959,95 @@ class StationServerTests(unittest.TestCase):
         )
         self.assertEqual(assigned.status_code, 200, assigned.get_data(as_text=True))
         self.assertEqual(assigned.get_json()["people"], [])
+        self.assertEqual(
+            next(
+                row["designation"]
+                for row in assigned.get_json()["cards"]
+                if row["card_id"] == "canvas-card"
+            ),
+            "User",
+        )
         station_ids = {
             row["station_id"]
             for row in assigned.get_json()["certifications"]
             if row["card_id"] == "canvas-card" and row["active"]
         }
         self.assertEqual(station_ids, {"stickers", "3d-printing"})
+
+    def test_staff_can_designate_imported_person_as_staff_when_assigning_card(self):
+        headings = [
+            "Email",
+            "Student",
+            "bid",
+            "Sticker Making - In Person (1253702)",
+            "Button Making - In Person (1253671)",
+            "Leather Work In-person Certification (1253687)",
+            "3D Printing - In Person Component (1253668)",
+            "Sewing Training - In Person (1253700)",
+            "Soldering & Power Supply - In Person (1253701)",
+            "Embroidery Training- In Person (1253680)",
+            "Vinyl Cutting - In Person (1253709)",
+            "Letterpress - In Person Component (1253691)",
+        ]
+        values = [
+            "newstaff@cpp.edu",
+            "Staff, New",
+            "B701",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]
+        imported = self.client.post(
+            "/api/import/canvas",
+            headers=self.auth(self.admin_token),
+            json={"csv": "\t".join(headings) + "\n" + "\t".join(values) + "\n"},
+        )
+        self.assertEqual(imported.status_code, 200, imported.get_data(as_text=True))
+        imported_person = imported.get_json()["people"][0]
+
+        staff_card = self.create_card(
+            "enrolling-staff-card",
+            "B702",
+            "Enrolling Staff",
+            "enroller@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        self.assertTrue(staff_card["ok"])
+        staff_token = self.login("enroller", "StaffPass123")
+
+        assigned = self.client.post(
+            "/api/cards",
+            headers=self.auth(staff_token),
+            json={
+                "card_id": "new-staff-card",
+                "person_ref": imported_person["person_ref"],
+                "name": "",
+                "email": "",
+                "designation": "Staff",
+                "active": True,
+                "notes": "",
+            },
+        )
+        self.assertEqual(assigned.status_code, 200, assigned.get_data(as_text=True))
+        card = next(
+            row for row in assigned.get_json()["cards"]
+            if row["card_id"] == "new-staff-card"
+        )
+        self.assertEqual(card["designation"], "Staff")
+
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            person = self.server.person_row(conn, "B701")
+            conn.close()
+        self.assertEqual(person["designation"], "Staff")
 
     def test_deleted_unknown_card_only_reappears_after_a_new_swipe(self):
         self.swipe("pending-card", "front-door", "pending-before")

@@ -882,6 +882,12 @@
       width: 100%;
     }
 
+    .checkout-button {
+      min-height: 36px;
+      padding: 7px 10px;
+      white-space: nowrap;
+    }
+
     .cert-toolbar {
       align-items: center;
       flex-wrap: wrap;
@@ -1013,9 +1019,12 @@
       min-width: 780px;
     }
 
-    .certifications-table table,
-    .station-rules-table table {
+    .certifications-table table {
       min-width: 980px;
+    }
+
+    .station-rules-table table {
+      min-width: 620px;
     }
 
     .cert-person-row {
@@ -1090,23 +1099,6 @@
 
     tr.row-info td:first-child {
       border-left-color: var(--green);
-    }
-
-    .rule-controls {
-      display: grid;
-      grid-template-columns: minmax(120px, 1fr) minmax(86px, auto);
-      gap: var(--space-2);
-      align-items: center;
-    }
-
-    .rule-controls select,
-    .rule-controls input[type="number"] {
-      min-height: 36px;
-      padding: 7px 9px;
-    }
-
-    .rule-controls input[type="number"] {
-      max-width: 96px;
     }
 
     .station-rules-table .checkline {
@@ -1483,6 +1475,7 @@
       .stack-table td { padding: 5px 0; border: 0; }
       .stack-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
       .stack-table td[colspan]::before { display: none; }
+
     }
 
     @media (max-width: 620px) {
@@ -1603,6 +1596,7 @@
                   <th>Person</th>
                   <th>Door</th>
                   <th>Inside For</th>
+                  <th id="people-action-header" class="hidden">Checkout</th>
                 </tr>
               </thead>
               <tbody id="people-body"></tbody>
@@ -1645,7 +1639,10 @@
         </div>
 
         <div id="warnings-panel" class="panel warning-panel">
-          <h2>Warnings</h2>
+          <div class="panel-heading">
+            <h2>Warnings</h2>
+            <button id="clear-warnings" type="button">Clear warnings</button>
+          </div>
           <div class="table-scroll stack-table">
             <table>
               <thead>
@@ -1701,7 +1698,7 @@
       </div>
 
       <section id="cert-content" class="grid hidden">
-        <div id="cert-edit-panel" class="panel">
+        <div id="cert-edit-panel" class="panel full-row">
           <h2>Certification</h2>
           <form id="cert-form">
             <div class="form-grid">
@@ -1771,6 +1768,21 @@
 
     <section id="tab-canvas" class="tab-panel" role="tabpanel">
       <section class="grid">
+        <section id="canvas-import-panel" class="panel full-row hidden">
+          <h2>Canvas Database Import</h2>
+          <p class="panel-note">Upload a Canvas CSV with Email, Student, bid, and the nine certification columns. Use 1 for certified and leave blank for not certified. Pending local changes are preserved.</p>
+          <div class="form-grid single-column">
+            <div>
+              <label for="canvas-import-file">Canvas CSV</label>
+              <input id="canvas-import-file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values">
+            </div>
+          </div>
+          <div class="form-actions">
+            <span id="canvas-import-status" class="subtle" aria-live="polite" aria-atomic="true"></span>
+            <button id="import-canvas" type="button">Import Canvas Database</button>
+          </div>
+        </section>
+
         <section id="canvas-sync-panel" class="panel full-row hidden">
           <h2>Pending Canvas Updates <span id="canvas-sync-count" class="badge warn">0</span></h2>
           <p class="panel-note">This server is the master database. After manually reflecting each change in Canvas, tick Updated in Canvas to clear it from this queue.</p>
@@ -1795,21 +1807,6 @@
 
     <section id="tab-admin" class="tab-panel" role="tabpanel">
       <section class="grid">
-        <section id="canvas-import-panel" class="panel hidden">
-          <h2>Canvas Database Import</h2>
-          <p class="panel-note">Upload a Canvas CSV with Email, Student, bid, and the nine certification columns. Use 1 for certified and leave blank for not certified. Pending local changes are preserved.</p>
-          <div class="form-grid single-column">
-            <div>
-              <label for="canvas-import-file">Canvas CSV</label>
-              <input id="canvas-import-file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values">
-            </div>
-          </div>
-          <div class="form-actions">
-            <span id="canvas-import-status" class="subtle" aria-live="polite" aria-atomic="true"></span>
-            <button id="import-canvas" type="button">Import Canvas Database</button>
-          </div>
-        </section>
-
         <section id="analytics-panel" class="full-row hidden">
           <div class="analytics-header">
             <div>
@@ -1880,9 +1877,6 @@
                   <th>Station</th>
                   <th>Show on Dashboard</th>
                   <th>Require Certification</th>
-                  <th>Temporary Override</th>
-                  <th>Expires</th>
-                  <th>Enabled By</th>
                 </tr>
               </thead>
               <tbody id="station-rules-body"></tbody>
@@ -1901,23 +1895,6 @@
           </div>
           <div id="certify-permissions-body" class="permission-results"></div>
         </div>
-
-        <section id="test-panel" class="panel full-row hidden">
-          <h2>Test Panel</h2>
-          <p class="panel-note">Simulate a reader swipe using real cards, station rules, certifications, and activity tracking. Test swipes are recorded in history and audit logs.</p>
-          <div class="form-grid">
-            <div>
-              <label for="test-card">Person</label>
-              <div class="lookup-wrap">
-                <input id="test-card" maxlength="200" autocomplete="off" placeholder="Search name">
-                <div id="test-card-results" class="lookup-results hidden"></div>
-              </div>
-            </div>
-            <div><label for="test-station">Reader location</label><select id="test-station"></select></div>
-            <div class="full"><div id="test-result" class="subtle" aria-live="polite">Choose a card and reader location, then simulate a swipe.</div></div>
-          </div>
-          <div class="form-actions"><button id="test-swipe" class="primary" type="button">Simulate Swipe</button></div>
-        </section>
 
         <section id="audit-panel" class="panel full-row hidden">
           <div class="panel-heading">
@@ -2089,6 +2066,25 @@
     </div>
   </div>
 
+  <div id="checkout-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="checkout-title" aria-describedby="checkout-message">
+    <div class="modal-card">
+      <h2 id="checkout-title">Manual Checkout</h2>
+      <div class="modal-body">
+        <p id="checkout-message"></p>
+        <div class="form-grid single-column" style="padding: 18px 0 0;">
+          <div>
+            <label for="checkout-time">Exit time</label>
+            <input id="checkout-time" type="datetime-local">
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="checkout-cancel" type="button">Cancel</button>
+        <button id="checkout-accept" class="danger" type="button">Check out</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = {
       cards: [],
@@ -2119,7 +2115,6 @@
       selectedCertPersonFilterCardId: "",
       selectedCertStationId: "",
       selectedCertStationFilterStationId: "",
-      selectedTestCardId: "",
       expandedCertificationCards: new Set(),
       dashboardRequestInFlight: false,
       adminRequestInFlight: false,
@@ -2132,7 +2127,8 @@
       warningPulseTimer: null,
       idleLogoutTimer: null,
       loginCooldownTimer: null,
-      lastIdleActivityAt: 0
+      lastIdleActivityAt: 0,
+      manualCheckoutTarget: null
     };
 
     const IDLE_LOGOUT_MS = 5 * 60 * 1000;
@@ -2144,10 +2140,12 @@
     const warningCount = document.getElementById("warning-count");
     const lastSwipe = document.getElementById("last-swipe");
     const peoplePanel = document.getElementById("people-panel");
+    const peopleActionHeader = document.getElementById("people-action-header");
     const stationUsagePanel = document.getElementById("station-usage-panel");
     const stationPeopleHeader = document.getElementById("station-people-header");
     const activeSessionsPanel = document.getElementById("active-sessions-panel");
     const warningsPanel = document.getElementById("warnings-panel");
+    const clearWarningsButton = document.getElementById("clear-warnings");
     const recentSwipesPanel = document.getElementById("recent-swipes-panel");
     const downloadSwipesButton = document.getElementById("download-swipes");
     const downloadAuditButton = document.getElementById("download-audit");
@@ -2208,11 +2206,6 @@
     const certifyPermissionsPanel = document.getElementById("certify-permissions-panel");
     const certifyPermissionFilter = document.getElementById("certify-permission-filter");
     const certifyPermissionsBody = document.getElementById("certify-permissions-body");
-    const testPanel = document.getElementById("test-panel");
-    const testCard = document.getElementById("test-card");
-    const testCardResults = document.getElementById("test-card-results");
-    const testStation = document.getElementById("test-station");
-    const testResult = document.getElementById("test-result");
     const cardLock = document.getElementById("card-lock");
     const cardContent = document.getElementById("card-content");
     const cardFilter = document.getElementById("card-filter");
@@ -2233,6 +2226,11 @@
     const confirmMessage = document.getElementById("confirm-message");
     const confirmCancel = document.getElementById("confirm-cancel");
     const confirmAccept = document.getElementById("confirm-accept");
+    const checkoutModal = document.getElementById("checkout-modal");
+    const checkoutMessage = document.getElementById("checkout-message");
+    const checkoutTime = document.getElementById("checkout-time");
+    const checkoutCancel = document.getElementById("checkout-cancel");
+    const checkoutAccept = document.getElementById("checkout-accept");
     const toast = document.getElementById("toast");
     const mobileTabMenu = document.getElementById("mobile-tab-menu");
     const swipeQuery = document.getElementById("swipe-query");
@@ -2280,6 +2278,13 @@
         minute: "2-digit",
         second: "2-digit"
       });
+    }
+
+    function localDateTimeInputValue(value = "") {
+      const date = value ? new Date(value) : new Date();
+      if (Number.isNaN(date.getTime())) return "";
+      const localTime = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+      return localTime.toISOString().slice(0, 16);
     }
 
     function formatDuration(seconds) {
@@ -2467,13 +2472,14 @@
     function actionClass(action, allowed) {
       if (!allowed) return "warn";
       if (action === "certification_granted") return "in";
-      if (action === "exit" || action === "station_out" || action === "station_auto_out") return "out";
+      if (action === "exit" || action === "manual_exit" || action === "station_out" || action === "station_auto_out") return "out";
       if (action === "enter" || action === "station_in") return "in";
       return "empty";
     }
 
     function actionLabel(action) {
       if (action === "certification_granted") return "certified";
+      if (action === "manual_exit") return "manual checkout";
       return action;
     }
 
@@ -2679,7 +2685,6 @@
       canvasImportPanel.classList.toggle("hidden", !showBroncoId);
       analyticsPanel.classList.toggle("hidden", !showBroncoId);
       canvasSyncPanel.classList.toggle("hidden", !showBroncoId);
-      testPanel.classList.toggle("hidden", !showBroncoId);
       cardLock.classList.toggle("hidden", cardAccess);
       cardContent.classList.toggle("hidden", !cardAccess);
       downloadSwipesButton.classList.toggle("hidden", !showBroncoId);
@@ -2740,7 +2745,6 @@
         state.selectedCertPersonFilterCardId = "";
         state.selectedCertStationId = "";
         state.selectedCertStationFilterStationId = "";
-        state.selectedTestCardId = "";
         state.expandedCertificationCards.clear();
       }
 
@@ -3232,15 +3236,6 @@
       });
     }
 
-    function overrideDurationForRow(row) {
-      const select = row.querySelector("[data-override-duration]");
-      const custom = row.querySelector("[data-override-custom]");
-      if (select.value === "custom") {
-        return custom.value || "30";
-      }
-      return select.value;
-    }
-
     function renderStationRules() {
       if (!canManageStationRules()) {
         stationRulesBody.innerHTML = "";
@@ -3263,34 +3258,9 @@
                 <span>Required</span>
               </label>
             </td>
-            <td>
-              <div class="rule-controls">
-                <label class="checkline">
-                  <input type="checkbox" data-station-override="${escapeHtml(station.station_id)}" ${station.cert_override_active ? "checked" : ""} ${station.requires_certification ? "" : "disabled"}>
-                  <span>${station.requires_certification ? "Allow temporarily" : "Not applicable"}</span>
-                </label>
-                <select data-override-duration="${escapeHtml(station.station_id)}" aria-label="Override duration" ${station.requires_certification ? "" : "disabled"}>
-                  <option value="30">30 min</option>
-                  <option value="60">1 hour</option>
-                  <option value="240">4 hours</option>
-                  <option value="custom">Custom</option>
-                </select>
-                <input class="hidden" data-override-custom="${escapeHtml(station.station_id)}" type="number" min="1" max="1440" value="30" aria-label="Custom override minutes" ${station.requires_certification ? "" : "disabled"}>
-              </div>
-            </td>
-            <td>${station.cert_override_active ? formatDateTime(station.cert_override_expires_at) : "--"}</td>
-            <td>${escapeHtml(station.cert_override_by || "--")}</td>
           </tr>
         `).join("")
-        : emptyRow(6, "No stations configured");
-
-      stationRulesBody.querySelectorAll("[data-override-duration]").forEach(select => {
-        select.addEventListener("change", () => {
-          const row = select.closest("tr");
-          const custom = row.querySelector("[data-override-custom]");
-          custom.classList.toggle("hidden", select.value !== "custom");
-        });
-      });
+        : emptyRow(3, "No stations configured");
 
       stationRulesBody.querySelectorAll("[data-station-requires]").forEach(input => {
         input.addEventListener("change", () => {
@@ -3309,16 +3279,6 @@
         });
       });
 
-      stationRulesBody.querySelectorAll("[data-station-override]").forEach(input => {
-        input.addEventListener("change", () => {
-          const row = input.closest("tr");
-          const body = { cert_override_active: input.checked };
-          if (input.checked) {
-            body.cert_override_duration_minutes = overrideDurationForRow(row);
-          }
-          saveStationRule(input.dataset.stationOverride, body);
-        });
-      });
     }
 
     function renderCertifyPermissions() {
@@ -3416,13 +3376,75 @@
 
       warningsMetric.classList.toggle("hidden", !canViewFull);
       peoplePanel.classList.toggle("hidden", !canViewPeople);
+      peopleActionHeader.classList.toggle("hidden", !canViewFull);
       stationUsagePanel.classList.remove("hidden");
       stationPeopleHeader.classList.toggle("hidden", !canViewFull);
       activeSessionsPanel.classList.toggle("hidden", !canViewFull);
       warningsPanel.classList.toggle("hidden", !canViewFull);
+      clearWarningsButton.classList.toggle("hidden", !canViewFull);
       recentSwipesPanel.classList.toggle("hidden", !canViewFull);
       downloadSwipesButton.classList.toggle("hidden", !canViewFull);
       downloadAuditButton.classList.toggle("hidden", role !== "admin");
+    }
+
+    function openManualCheckoutDialog(cardId, name) {
+      if (!["admin", "staff"].includes(state.role)) return;
+      state.manualCheckoutTarget = { cardId, name };
+      checkoutMessage.textContent = `Set the exit time for ${name || "this person"}. Any open station sessions will close at the same time.`;
+      checkoutTime.value = localDateTimeInputValue();
+      checkoutModal.classList.remove("hidden");
+      checkoutTime.focus();
+    }
+
+    function closeManualCheckoutDialog() {
+      checkoutModal.classList.add("hidden");
+      state.manualCheckoutTarget = null;
+      checkoutTime.value = "";
+    }
+
+    async function submitManualCheckout() {
+      const target = state.manualCheckoutTarget;
+      if (!target) return;
+      const exitDate = new Date(checkoutTime.value);
+      if (Number.isNaN(exitDate.getTime())) {
+        window.alert("Choose a valid checkout time.");
+        return;
+      }
+
+      checkoutAccept.disabled = true;
+      try {
+        await postJson(`/api/active-people/${encodeURIComponent(target.cardId)}/checkout`, {
+          exited_at: exitDate.toISOString(),
+        });
+        closeManualCheckoutDialog();
+        await refreshDashboard();
+      } catch (error) {
+        window.alert(error.message || "Could not check out this person.");
+      } finally {
+        checkoutAccept.disabled = false;
+      }
+    }
+
+    async function clearWarnings() {
+      if (!["admin", "staff"].includes(state.role)) return;
+      const confirmed = await showConfirmDialog({
+        title: "Clear Warnings",
+        message: "Dismiss all current warnings from the live dashboard? Swipe history and exports will not be deleted.",
+        confirmText: "Clear warnings",
+        danger: true,
+      });
+      if (!confirmed) return;
+
+      clearWarningsButton.disabled = true;
+      try {
+        const data = await postJson("/api/warnings/clear", {});
+        await refreshDashboard();
+        showToast(`${data.dismissed_count || 0} warning${data.dismissed_count === 1 ? "" : "s"} cleared`);
+      } catch (error) {
+        window.alert(error.message || "Could not clear warnings.");
+      } finally {
+        clearWarningsButton.disabled = false;
+      }
     }
 
     function renderDashboard(data) {
@@ -3432,6 +3454,7 @@
       const recentSwipes = data.recent_swipes || [];
       const warnings = data.warnings || [];
       const canViewStationPeople = ["admin", "staff"].includes(dashboardRole(data));
+      const canManuallyCheckout = ["admin", "staff"].includes(dashboardRole(data));
       const activeStationCount = Number.isFinite(Number(data.active_station_count))
         ? Number(data.active_station_count)
         : stations.filter(station => station.active_sessions > 0).length;
@@ -3462,6 +3485,7 @@
       state.lastWarningCount = warningTotal;
       state.hasDashboardLoaded = true;
       updateDashboardVisibility(data);
+      clearWarningsButton.disabled = warningTotal === 0;
 
       peopleBody.innerHTML = activePeople.length
         ? activePeople.map(person => `
@@ -3469,9 +3493,24 @@
             <td data-label="Person">${personCell(person)}</td>
             <td data-label="Door">${escapeHtml(person.entry_door_name)}</td>
             <td data-label="Inside for">${formatDuration(person.elapsed_seconds)}</td>
+            ${canManuallyCheckout ? `
+              <td data-label="Checkout">
+                <button class="danger checkout-button" type="button" data-manual-checkout="${escapeHtml(person.card_id)}">Check out</button>
+              </td>
+            ` : ""}
           </tr>
         `).join("")
-        : emptyRow(3, "No one is currently counted inside");
+        : emptyRow(canManuallyCheckout ? 4 : 3, "No one is currently counted inside");
+
+      peopleBody.querySelectorAll("button[data-manual-checkout]").forEach(button => {
+        button.addEventListener("click", () => {
+          const person = activePeople.find(item => item.card_id === button.dataset.manualCheckout);
+          openManualCheckoutDialog(
+            button.dataset.manualCheckout,
+            person ? (person.display_name || person.name) : "this person",
+          );
+        });
+      });
 
       stationsBody.innerHTML = stations.length
         ? stations.map(station => `
@@ -3841,7 +3880,6 @@
           text: analytics.space_open_now ? "Open now" : "Closed now",
           className: `space-state ${analytics.space_open_now ? "open" : "closed"}`
         },
-        { text: String(analytics.timezone || "").replaceAll("_", " ") },
         { text: `Updated ${formatDateTime(analytics.generated_at)}` }
       ];
       analyticsStatus.innerHTML = analyticsStatusItems
@@ -3905,7 +3943,6 @@
       renderCertifications();
       renderStationRules();
       renderCertifyPermissions();
-      renderTestPanel();
       renderCanvasSyncTasks();
       renderAuditLog();
       renderAnalytics();
@@ -3914,63 +3951,6 @@
       renderCertPersonFilterLookup();
       renderCertStationLookup();
       renderCertStationFilterLookup();
-    }
-
-    function selectTestCard(card) {
-      state.selectedTestCardId = card.card_id;
-      testCard.value = cardSearchLabel(card);
-      testCardResults.classList.add("hidden");
-      testCardResults.innerHTML = "";
-    }
-
-    function renderTestCardLookup() {
-      renderPersonLookup(
-        testCard,
-        testCardResults,
-        state.selectedTestCardId,
-        selectTestCard,
-        "No matching cards"
-      );
-    }
-
-    function renderTestPanel() {
-      if (!canManageAccounts()) {
-        testCardResults.classList.add("hidden");
-        return;
-      }
-
-      if (
-        state.selectedTestCardId
-        && !state.cards.some(card => card.card_id === state.selectedTestCardId)
-      ) {
-        state.selectedTestCardId = "";
-        testCard.value = "";
-      }
-
-      const selectedStation = testStation.value;
-      testStation.innerHTML = `<option value="">Choose a door or station</option>${state.readers.map(station => `<option value="${escapeHtml(station.station_id)}">${escapeHtml(station.station_name)} (${escapeHtml(station.station_kind)})</option>`).join("")}`;
-      testStation.value = selectedStation;
-      renderTestCardLookup();
-    }
-
-    async function simulateSwipe() {
-      if (!state.selectedTestCardId || !testStation.value) {
-        testResult.textContent = "Choose both a card and a reader location.";
-        return;
-      }
-      testResult.textContent = "Simulating swipe...";
-      try {
-        const result = await postJson("/api/test-swipe", { card_id: state.selectedTestCardId, station_id: testStation.value });
-        const action = actionLabel(result.action || "completed");
-        const warning = result.warning ? ` - ${warningLabel(result.warning)}` : "";
-        testResult.textContent = `Simulated: ${action}${warning}`;
-        showToast(`Test swipe: ${action}`);
-        await refreshDashboard();
-        await refreshAdmin();
-      } catch (error) {
-        testResult.textContent = error.message;
-        showToast(error.message, "error");
-      }
     }
 
     function renderPendingCards() {
@@ -4489,10 +4469,6 @@
       renderCertStationLookup();
     });
 
-    const renderTestCardLookupDebounced = debounce(() => {
-      renderTestCardLookup();
-    });
-
     document.querySelectorAll(".tab-button").forEach(button => {
       button.setAttribute("role", "tab");
       button.setAttribute("aria-controls", `tab-${button.dataset.tab}`);
@@ -4512,7 +4488,6 @@
 
     mobileTabMenu.addEventListener("change", () => activateTab(mobileTabMenu.value));
     document.getElementById("swipe-refresh").addEventListener("click", refreshDashboard);
-    document.getElementById("test-swipe").addEventListener("click", simulateSwipe);
     [swipeQuery, swipeStation, swipeWarningOnly].forEach(input => input.addEventListener("change", () => refreshDashboard()));
 
     accessLogin.addEventListener("click", () => {
@@ -4593,15 +4568,6 @@
       renderCertStationLookup();
     });
 
-    testCard.addEventListener("input", () => {
-      state.selectedTestCardId = "";
-      renderTestCardLookupDebounced();
-    });
-
-    testCard.addEventListener("focus", () => {
-      renderTestCardLookup();
-    });
-
     document.addEventListener("click", event => {
       if (!event.target.closest(".lookup-wrap")) {
         certCardResults.classList.add("hidden");
@@ -4609,7 +4575,6 @@
         certStationResults.classList.add("hidden");
         certStationFilterResults.classList.add("hidden");
         cardPersonResults.classList.add("hidden");
-        testCardResults.classList.add("hidden");
       }
     });
 
@@ -4627,14 +4592,28 @@
       }
     });
 
+    checkoutCancel.addEventListener("click", closeManualCheckoutDialog);
+    checkoutAccept.addEventListener("click", submitManualCheckout);
+    checkoutModal.addEventListener("click", event => {
+      if (event.target === checkoutModal) closeManualCheckoutDialog();
+    });
+
     document.addEventListener("keydown", event => {
-      if (event.key === "Escape" && !confirmModal.classList.contains("hidden")) {
-        closeConfirmDialog(false);
+      if (event.key === "Escape") {
+        if (!checkoutModal.classList.contains("hidden")) {
+          closeManualCheckoutDialog();
+        } else if (!confirmModal.classList.contains("hidden")) {
+          closeConfirmDialog(false);
+        }
       }
     });
 
     downloadSwipesButton.addEventListener("click", () => {
       downloadCsv("/swipes.csv");
+    });
+
+    clearWarningsButton.addEventListener("click", () => {
+      clearWarnings();
     });
 
     downloadAuditButton.addEventListener("click", () => {
