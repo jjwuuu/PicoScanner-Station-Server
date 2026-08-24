@@ -2648,6 +2648,7 @@
       const certEditAccess = canSubmitCertifications();
       const stationRuleAccess = canManageStationRules();
       const showBroncoId = canManageAccounts();
+      const elevated = ["admin", "staff"].includes(state.role);
 
       accessStatus.textContent = state.role === "admin"
         ? `Admin unlocked${state.userName ? ": " + state.userName : ""}`

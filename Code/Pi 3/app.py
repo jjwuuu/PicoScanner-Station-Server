@@ -736,6 +736,12 @@ def init_db():
         ensure_column(
             conn,
             "certifications",
+            "notes",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        ensure_column(
+            conn,
+            "certifications",
             "granted_via",
             "TEXT NOT NULL DEFAULT 'dashboard'",
         )
