@@ -197,8 +197,9 @@ def account_for_token(token):
         if session and session.get("expires_at", 0) <= time.time():
             session_tokens.pop(token, None)
             session = None
+        card_id = session["card_id"] if session else ""
 
-    if not session:
+    if not card_id:
         return None
 
     with db_lock:
@@ -216,7 +217,7 @@ def account_for_token(token):
             JOIN cards ON cards.card_id = user_accounts.card_id
             WHERE user_accounts.card_id = ?
             """,
-            (session["card_id"],),
+            (card_id,),
         ).fetchone()
         conn.close()
 
