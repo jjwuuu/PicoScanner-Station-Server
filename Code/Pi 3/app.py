@@ -1480,7 +1480,7 @@ def queue_canvas_sync_task(conn, card, station_id, active, actor=None):
     return True
 
 
-def canvas_sync_task_rows(conn):
+def canvas_sync_task_rows(conn, include_bronco_id=False):
     rows = conn.execute(
         """
         SELECT
@@ -1503,7 +1503,7 @@ def canvas_sync_task_rows(conn):
     ).fetchall()
     return [
         {
-            "bronco_id": row["bronco_id"],
+            "person_ref": person_ref_for_bronco_id(row["bronco_id"]),
             "card_id": row["card_id"],
             "station_id": row["station_id"],
             "station_name": row["station_name"],
@@ -1513,6 +1513,7 @@ def canvas_sync_task_rows(conn):
             "created_by_name": row["created_by_name"],
             "name": row["name"],
             "email": row["email"],
+            **({"bronco_id": row["bronco_id"]} if include_bronco_id else {}),
         }
         for row in rows
     ]
@@ -2692,7 +2693,11 @@ def admin_data():
             include_bronco_id=include_sensitive,
         )
         certify_permissions = certify_permission_rows(conn) if role == "admin" else []
-        canvas_sync_tasks = canvas_sync_task_rows(conn) if role == "admin" else []
+        canvas_sync_tasks = (
+            canvas_sync_task_rows(conn, include_bronco_id=(role == "admin"))
+            if role in ("admin", "staff")
+            else []
+        )
         audit_log = audit_log_rows(conn) if role == "admin" else []
         can_certify_station_ids = (
             [station["station_id"] for station in stations]
@@ -3016,7 +3021,7 @@ def import_canvas_csv():
         conn.commit()
         people = people_rows(conn, include_bronco_id=True)
         certifications = certification_rows(conn, include_bronco_id=True)
-        canvas_sync_tasks = canvas_sync_task_rows(conn)
+        canvas_sync_tasks = canvas_sync_task_rows(conn, include_bronco_id=True)
         conn.close()
 
     status = 200 if imported_rows else 400
@@ -3041,17 +3046,17 @@ def import_canvas_csv():
 
 @app.post("/api/canvas-sync-tasks/complete")
 def complete_canvas_sync_task():
-    role, error = require_access("admin")
+    role, error = require_access("staff")
     if error:
         return error
 
     account = account_for_token(token_from_request())
     data = request_json()
     try:
-        bronco_id = validate_text(
-            data.get("bronco_id"),
-            "bronco_id",
-            MAX_ID_LENGTH,
+        person_ref = validate_text(
+            data.get("person_ref"),
+            "person_ref",
+            128,
             required=True,
         )
         station_id = validate_text(
@@ -3065,6 +3070,11 @@ def complete_canvas_sync_task():
 
     with db_lock:
         conn = db_connect()
+        person = person_row_from_ref(conn, person_ref)
+        if not person:
+            conn.close()
+            return jsonify({"ok": False, "error": "Pending Canvas task person not found"}), 404
+        bronco_id = person["bronco_id"]
         task = conn.execute(
             """
             SELECT desired_active
@@ -3094,7 +3104,7 @@ def complete_canvas_sync_task():
             {"desired_active": bool(task["desired_active"])},
         )
         conn.commit()
-        tasks = canvas_sync_task_rows(conn)
+        tasks = canvas_sync_task_rows(conn, include_bronco_id=(role == "admin"))
         conn.close()
 
     return jsonify({"ok": True, "canvas_sync_tasks": tasks})
@@ -4918,7 +4928,7 @@ def build_master_workbook(conn):
     add_workbook_sheet(
         workbook, "Pending Canvas",
         ["bronco_id", "name", "email", "card_id", "station_id", "station_name", "desired_active", "created_at", "created_by_card_id", "created_by_name"],
-        canvas_sync_task_rows(conn),
+        canvas_sync_task_rows(conn, include_bronco_id=True),
     )
 
     swipe_rows = conn.execute(

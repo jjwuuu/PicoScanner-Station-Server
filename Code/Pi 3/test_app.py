@@ -974,6 +974,45 @@ class StationServerTests(unittest.TestCase):
         }
         self.assertEqual(station_ids, {"stickers", "3d-printing"})
 
+    def test_staff_can_complete_canvas_sync_tasks_without_bronco_id(self):
+        self.create_card(
+            "canvas-staff-card",
+            "B710",
+            "Canvas Staff",
+            "canvas.staff@cpp.edu",
+            designation="Staff",
+            login_role="Staff",
+            password="StaffPass123",
+        )
+        self.create_card("canvas-user-card", "B711", "Canvas User", "canvas.user@cpp.edu")
+        staff_token = self.login("canvas.staff", "StaffPass123")
+
+        granted = self.client.post(
+            "/api/certifications",
+            headers=self.auth(self.admin_token),
+            json={
+                "card_id": "canvas-user-card",
+                "station_id": "soldering",
+                "active": True,
+                "notes": "",
+            },
+        )
+        self.assertEqual(granted.status_code, 200, granted.get_data(as_text=True))
+
+        staff_data = self.client.get("/api/admin", headers=self.auth(staff_token))
+        self.assertEqual(staff_data.status_code, 200, staff_data.get_data(as_text=True))
+        task = staff_data.get_json()["canvas_sync_tasks"][0]
+        self.assertIn("person_ref", task)
+        self.assertNotIn("bronco_id", task)
+
+        completed = self.client.post(
+            "/api/canvas-sync-tasks/complete",
+            headers=self.auth(staff_token),
+            json={"person_ref": task["person_ref"], "station_id": task["station_id"]},
+        )
+        self.assertEqual(completed.status_code, 200, completed.get_data(as_text=True))
+        self.assertEqual(completed.get_json()["canvas_sync_tasks"], [])
+
     def test_staff_can_designate_imported_person_as_staff_when_assigning_card(self):
         headings = [
             "Email",

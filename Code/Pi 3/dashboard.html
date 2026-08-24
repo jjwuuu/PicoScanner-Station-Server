@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Station Dashboard</title>
+  <title>Makerspace Operations</title>
   <style>
     :root {
       color-scheme: dark;
@@ -1530,7 +1530,7 @@
   <main>
     <header>
       <div>
-        <h1>Station Dashboard</h1>
+        <h1>Makerspace Operations</h1>
       </div>
       <div class="header-tools">
         <div class="access-panel" aria-label="Access controls">
@@ -1755,7 +1755,6 @@
                   <th>Station</th>
                   <th>Status</th>
                   <th>Updated</th>
-                  <th>Notes</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -2606,7 +2605,7 @@
       setTabVisible("swipes", elevated);
       setTabVisible("certifications", loggedIn);
       setTabVisible("cards", elevated);
-      setTabVisible("canvas", role === "admin");
+      setTabVisible("canvas", elevated);
       setTabVisible("admin", elevated);
 
       const activePanel = document.querySelector(".tab-panel.active");
@@ -2684,7 +2683,7 @@
       certifyPermissionsPanel.classList.toggle("hidden", !canManageCertifyPermissions());
       canvasImportPanel.classList.toggle("hidden", !showBroncoId);
       analyticsPanel.classList.toggle("hidden", !showBroncoId);
-      canvasSyncPanel.classList.toggle("hidden", !showBroncoId);
+      canvasSyncPanel.classList.toggle("hidden", !elevated);
       cardLock.classList.toggle("hidden", cardAccess);
       cardContent.classList.toggle("hidden", !cardAccess);
       downloadSwipesButton.classList.toggle("hidden", !showBroncoId);
@@ -3089,7 +3088,6 @@
           <td>${escapeHtml(cert.station_name)}</td>
           <td>${certificationStatusBadge(cert)}</td>
           <td>${formatDateTime(cert.updated_at)}</td>
-          <td>${escapeHtml(cert.notes || "--")}</td>
           <td>${certificationActionCell(cert)}</td>
         </tr>
       `).join("");
@@ -3140,7 +3138,6 @@
                   <th>Station</th>
                   <th>Status</th>
                   <th>Updated</th>
-                  <th>Notes</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -3150,7 +3147,6 @@
                     <td>${escapeHtml(cert.station_name)}</td>
                     <td>${certificationStatusBadge(cert)}</td>
                     <td>${formatDateTime(cert.updated_at)}</td>
-                    <td>${escapeHtml(cert.notes || "--")}</td>
                     <td>${certificationActionCell(cert)}</td>
                   </tr>
                 `).join("")}
@@ -3165,14 +3161,13 @@
       certificationsHead.innerHTML = state.certViewMode === "all"
         ? `
           <th>Person</th>
-          <th colspan="5">Certified Stations</th>
+          <th colspan="4">Certified Stations</th>
         `
         : `
           <th>Person</th>
           <th>Station</th>
           <th>Status</th>
           <th>Updated</th>
-          <th>Notes</th>
           <th>Action</th>
         `;
     }
@@ -3193,23 +3188,23 @@
             return `
               <tr class="cert-person-row" data-cert-person-card-id="${escapeHtml(group.person.card_id)}" aria-expanded="${expanded ? "true" : "false"}" tabindex="0" role="button" aria-label="Show certifications for ${escapeHtml(group.person.display_name || group.person.name || group.person.card_id)}">
                 <td>${personCell(group.person)}</td>
-                <td colspan="5">
+                <td colspan="4">
                   <div class="cert-summary">${renderCertificationSummary(group.certifications)}</div>
                 </td>
               </tr>
               ${expanded ? `
                 <tr class="cert-detail-row">
-                  <td colspan="6">${renderCertificationDetailTable(group.certifications)}</td>
+                  <td colspan="5">${renderCertificationDetailTable(group.certifications)}</td>
                 </tr>
               ` : ""}
             `;
           }).join("")
-          : emptyRow(6, certificationEmptyMessage());
+          : emptyRow(5, certificationEmptyMessage());
       } else {
         const rows = filteredCertifications();
         certificationsBody.innerHTML = rows.length
           ? renderCertificationRows(rows)
-          : emptyRow(6, certificationEmptyMessage());
+          : emptyRow(5, certificationEmptyMessage());
       }
 
       certificationsBody.querySelectorAll("tr[data-cert-person-card-id]").forEach(row => {
@@ -3552,7 +3547,7 @@
     }
 
     function renderCanvasSyncTasks() {
-      const tasks = state.role === "admin" ? state.canvasSyncTasks : [];
+      const tasks = ["admin", "staff"].includes(state.role) ? state.canvasSyncTasks : [];
       canvasSyncCount.textContent = tasks.length;
       canvasSyncCount.className = `badge ${tasks.length ? "warn" : "empty"}`;
       canvasQueueCount.textContent = tasks.length;
@@ -3567,7 +3562,7 @@
             <td>${escapeHtml(task.created_by_name || task.created_by_card_id || "System")}</td>
             <td>
               <label class="checkline">
-                <input type="checkbox" data-complete-canvas-task="${escapeHtml(task.bronco_id)}" data-canvas-station-id="${escapeHtml(task.station_id)}">
+                <input type="checkbox" data-complete-canvas-task="${escapeHtml(task.person_ref)}" data-canvas-station-id="${escapeHtml(task.station_id)}">
                 <span>Updated</span>
               </label>
             </td>
@@ -3581,7 +3576,7 @@
           input.disabled = true;
           try {
             const data = await postJson("/api/canvas-sync-tasks/complete", {
-              bronco_id: input.dataset.completeCanvasTask,
+              person_ref: input.dataset.completeCanvasTask,
               station_id: input.dataset.canvasStationId
             });
             state.canvasSyncTasks = data.canvas_sync_tasks || [];
