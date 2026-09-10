@@ -5,6 +5,7 @@ import ipaddress
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -64,8 +65,9 @@ PERSON_REF_SECRET = (
     or secrets.token_urlsafe(32)
 )
 ROLE_LEVELS = {"volunteer": 1, "staff": 2, "admin": 3}
-CERT_CONFIRM_SECONDS = 4
+CERT_CONFIRM_SECONDS = 5
 CERT_MODE_SECONDS = 40
+KIT_PAIR_SECONDS = 15
 SESSION_MAX_SECONDS = 12 * 60 * 60
 SESSION_LIMIT_PER_ACCOUNT = 3
 LOGIN_PAIR_WINDOW_SECONDS = 5 * 60
@@ -92,6 +94,7 @@ session_tokens = {}
 login_attempts = {}
 security_audit_cooldowns = {}
 cert_modes = {}
+kit_swipe_modes = {}
 DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
 
 
@@ -664,6 +667,28 @@ def init_db():
                 target_id TEXT NOT NULL DEFAULT '',
                 details TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS kits (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                card_id TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS kit_checkouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kit_id TEXT NOT NULL,
+                kit_name TEXT NOT NULL,
+                card_id TEXT NOT NULL,
+                checked_out_at TEXT NOT NULL,
+                returned_at TEXT NOT NULL DEFAULT '',
+                returned_by_card_id TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (kit_id) REFERENCES kits(id),
+                FOREIGN KEY (card_id) REFERENCES cards(card_id)
+            );
             """
         )
 
@@ -846,6 +871,19 @@ def init_db():
             ON canvas_sync_tasks(status, created_at)
             """
         )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_kits_card_id
+            ON kits(card_id)
+            WHERE card_id != ''
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_kit_checkouts_active
+            ON kit_checkouts(kit_id, returned_at)
+            """
+        )
         blank_usernames = conn.execute(
             """
             SELECT user_accounts.card_id, cards.email
@@ -914,7 +952,7 @@ def seed_stations():
         except ValueError as error:
             raise RuntimeError(str(error)) from error
         station_kind = str(station.get("kind", "station")).strip().lower()
-        if station_kind not in ("door", "station"):
+        if station_kind not in ("door", "station", "kit"):
             raise RuntimeError(
                 f"Station {station_id} has invalid kind {station_kind!r}"
             )
@@ -1110,7 +1148,7 @@ def get_station_info(conn, station_id, provided_name="", provided_kind=""):
     normalized_kind = str(provided_kind or "").strip().lower()
     station_kind = (
         normalized_kind
-        if normalized_kind in ("door", "station")
+        if normalized_kind in ("door", "station", "kit")
         else infer_kind(station_id, station_name)
     )
 
@@ -1132,6 +1170,33 @@ def get_station_info(conn, station_id, provided_name="", provided_kind=""):
         "cert_override_updated_at": "",
         "cert_override_expires_at": "",
     }
+
+
+DEFAULT_KITS = (
+    ("office-supplies", "Office Supplies"),
+    ("sand-paper", "Sand Paper"),
+    ("colored-pencils", "Colored Pencils"),
+    ("marker-kit", "Marker Kit"),
+    ("whiteboard-kit", "Whiteboard Kit"),
+)
+
+
+def seed_kits():
+    timestamp = now_iso()
+    with db_lock:
+        conn = db_connect()
+        for kit_id, kit_name in DEFAULT_KITS:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO kits (
+                    id, name, card_id, active, notes, created_at, updated_at
+                )
+                VALUES (?, ?, '', 1, '', ?, ?)
+                """,
+                (kit_id, kit_name, timestamp, timestamp),
+            )
+        conn.commit()
+        conn.close()
 
 
 def building_active_count(conn):
@@ -1728,7 +1793,10 @@ def log_event(
         ),
     )
 
-    led_signal = "access_granted" if allowed else "access_denied"
+    if not allowed and warning == "unknown_card":
+        led_signal = "unknown_card"
+    else:
+        led_signal = "access_granted" if allowed else "access_denied"
 
     return {
         "card_id": card_id,
@@ -2274,6 +2342,192 @@ def handle_station_swipe(conn, card_id, station_id, station, event_id=""):
     return result
 
 
+def active_kit_swipe_mode(reader_id):
+    mode = kit_swipe_modes.get(reader_id)
+    if mode and mode["expires_at"] <= time.time():
+        kit_swipe_modes.pop(reader_id, None)
+        mode = None
+    return mode
+
+
+def kit_checkout_row(conn, kit_id):
+    return conn.execute(
+        """
+        SELECT id, kit_id, kit_name, card_id, checked_out_at
+        FROM kit_checkouts
+        WHERE kit_id = ? AND returned_at = ''
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (kit_id,),
+    ).fetchone()
+
+
+def handle_kit_swipe(conn, card_id, reader, event_id=""):
+    reader_id = reader["station_id"]
+    reader_name = reader["station_name"]
+    kit = conn.execute(
+        """
+        SELECT id, name, card_id, active
+        FROM kits
+        WHERE card_id = ? AND card_id != ''
+        """,
+        (card_id,),
+    ).fetchone()
+
+    if kit:
+        if not kit["active"]:
+            return log_event(
+                conn,
+                card_id,
+                reader_id,
+                reader_name,
+                "kit",
+                "kit_denied",
+                allowed=False,
+                warning="inactive_kit",
+                details=f"{kit['name']} is disabled",
+                event_id=event_id,
+            )
+        kit_swipe_modes[reader_id] = {
+            "kit_id": kit["id"],
+            "kit_name": kit["name"],
+            "expires_at": time.time() + KIT_PAIR_SECONDS,
+        }
+        result = log_event(
+            conn,
+            card_id,
+            reader_id,
+            reader_name,
+            "kit",
+            "kit_pending_user",
+            details=f"{kit['name']} selected; swipe the user's card within {KIT_PAIR_SECONDS} seconds",
+            event_id=event_id,
+        )
+        result["kit_pair_expires_at"] = int(kit_swipe_modes[reader_id]["expires_at"])
+        return result
+
+    mode = active_kit_swipe_mode(reader_id)
+    if not mode:
+        return log_event(
+            conn,
+            card_id,
+            reader_id,
+            reader_name,
+            "kit",
+            "kit_denied",
+            allowed=False,
+            warning="kit_card_required",
+            details="Swipe a registered kit card before the user's card",
+            event_id=event_id,
+        )
+
+    card = card_row(conn, card_id)
+    if not card:
+        return log_event(
+            conn,
+            card_id,
+            reader_id,
+            reader_name,
+            "kit",
+            "kit_denied",
+            allowed=False,
+            warning="unknown_card",
+            details="User card is not in the card database",
+            event_id=event_id,
+        )
+    if not card_can_enter(card):
+        return log_event(
+            conn,
+            card_id,
+            reader_id,
+            reader_name,
+            "kit",
+            "kit_denied",
+            allowed=False,
+            warning="inactive_card",
+            details="User card is disabled in the card database",
+            event_id=event_id,
+        )
+
+    current_checkout = kit_checkout_row(conn, mode["kit_id"])
+    if current_checkout and current_checkout["card_id"] != card_id:
+        return log_event(
+            conn,
+            card_id,
+            reader_id,
+            reader_name,
+            "kit",
+            "kit_denied",
+            allowed=False,
+            warning="kit_checked_out",
+            details=f"{mode['kit_name']} is already checked out by another user",
+            event_id=event_id,
+        )
+
+    kit_swipe_modes.pop(reader_id, None)
+    actor = {
+        "card_id": card_id,
+        "name": card_display(card, card_id),
+        "role": card["designation"],
+    }
+    if current_checkout:
+        returned_at = now_iso()
+        conn.execute(
+            """
+            UPDATE kit_checkouts
+            SET returned_at = ?, returned_by_card_id = ?
+            WHERE id = ?
+            """,
+            (returned_at, card_id, current_checkout["id"]),
+        )
+        add_audit_log(
+            conn,
+            actor,
+            "kit_returned_via_swipe",
+            "kit",
+            mode["kit_id"],
+            {"kit_name": mode["kit_name"], "checkout_id": current_checkout["id"]},
+        )
+        return log_event(
+            conn,
+            card_id,
+            reader_id,
+            reader_name,
+            "kit",
+            "kit_return",
+            details=f"{mode['kit_name']} returned by {card_display(card, card_id)}",
+            event_id=event_id,
+        )
+
+    checked_out_at = now_iso()
+    conn.execute(
+        """
+        INSERT INTO kit_checkouts (kit_id, kit_name, card_id, checked_out_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (mode["kit_id"], mode["kit_name"], card_id, checked_out_at),
+    )
+    add_audit_log(
+        conn,
+        actor,
+        "kit_checked_out_via_swipe",
+        "kit",
+        mode["kit_id"],
+        {"kit_name": mode["kit_name"], "checked_out_at": checked_out_at},
+    )
+    return log_event(
+        conn,
+        card_id,
+        reader_id,
+        reader_name,
+        "kit",
+        "kit_checkout",
+        details=f"{mode['kit_name']} checked out to {card_display(card, card_id)}",
+        event_id=event_id,
+    )
+
+
 @app.post("/swipe")
 def swipe():
     key_error = require_station_api_key()
@@ -2355,6 +2609,8 @@ def swipe():
                 station["station_name"],
                 event_id,
             )
+        elif station["station_kind"] == "kit":
+            result = handle_kit_swipe(conn, card_id, station, event_id)
         else:
             result = handle_station_swipe(
                 conn,
@@ -2407,6 +2663,8 @@ def test_swipe():
         station = get_station_info(conn, station_id)
         if station["station_kind"] == "door":
             result = handle_door_swipe(conn, card_id, station_id, station["station_name"])
+        elif station["station_kind"] == "kit":
+            result = handle_kit_swipe(conn, card_id, station)
         else:
             result = handle_station_swipe(conn, card_id, station_id, station)
         add_audit_log(conn, account, "test_swipe", "station", station_id, {"card_id": card_id})
@@ -2676,6 +2934,81 @@ def logout():
     return jsonify({"ok": True})
 
 
+def kit_rows(conn):
+    rows = conn.execute(
+        """
+        SELECT
+            kits.id AS kit_id,
+            kits.name AS kit_name,
+            kits.card_id AS kit_card_id,
+            kits.active,
+            kits.notes,
+            kits.updated_at,
+            active_checkout.id AS checkout_id,
+            active_checkout.card_id AS checked_out_to_card_id,
+            active_checkout.checked_out_at,
+            cards.name AS checked_out_to_name,
+            cards.email AS checked_out_to_email
+        FROM kits
+        LEFT JOIN kit_checkouts AS active_checkout
+            ON active_checkout.kit_id = kits.id
+            AND active_checkout.returned_at = ''
+        LEFT JOIN cards ON cards.card_id = active_checkout.card_id
+        ORDER BY kits.name
+        """
+    ).fetchall()
+    return [
+        {
+            "kit_id": row["kit_id"],
+            "kit_name": row["kit_name"],
+            "kit_card_id": row["kit_card_id"],
+            "active": bool(row["active"]),
+            "notes": row["notes"],
+            "updated_at": row["updated_at"],
+            "checkout_id": row["checkout_id"],
+            "checked_out_to_card_id": row["checked_out_to_card_id"] or "",
+            "checked_out_to_name": row["checked_out_to_name"] or "",
+            "checked_out_to_email": row["checked_out_to_email"] or "",
+            "checked_out_at": row["checked_out_at"] or "",
+        }
+        for row in rows
+    ]
+
+
+def kit_checkout_history_rows(conn, limit=50):
+    rows = conn.execute(
+        """
+        SELECT
+            kit_checkouts.id,
+            kit_checkouts.kit_id,
+            kit_checkouts.kit_name,
+            kit_checkouts.card_id,
+            kit_checkouts.checked_out_at,
+            kit_checkouts.returned_at,
+            cards.name,
+            cards.email
+        FROM kit_checkouts
+        LEFT JOIN cards ON cards.card_id = kit_checkouts.card_id
+        ORDER BY kit_checkouts.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "kit_id": row["kit_id"],
+            "kit_name": row["kit_name"],
+            "card_id": row["card_id"],
+            "name": row["name"] or "",
+            "email": row["email"] or "",
+            "checked_out_at": row["checked_out_at"],
+            "returned_at": row["returned_at"],
+        }
+        for row in rows
+    ]
+
+
 @app.get("/api/admin")
 def admin_data():
     role, error = require_access("staff", "volunteer")
@@ -2706,6 +3039,8 @@ def admin_data():
             else []
         )
         audit_log = audit_log_rows(conn) if role == "admin" else []
+        kits = kit_rows(conn)
+        kit_checkouts = kit_checkout_history_rows(conn)
         can_certify_station_ids = (
             [station["station_id"] for station in stations]
             if role == "admin"
@@ -2724,9 +3059,133 @@ def admin_data():
             "certify_permissions": certify_permissions,
             "canvas_sync_tasks": canvas_sync_tasks,
             "audit_log": audit_log,
+            "kits": kits,
+            "kit_checkouts": kit_checkouts,
             "can_certify_station_ids": can_certify_station_ids,
         }
     )
+
+
+@app.post("/api/kits")
+def save_kit():
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    data = request_json()
+    try:
+        name = validate_text(data.get("name"), "kit name", MAX_NAME_LENGTH, required=True)
+        card_id = validate_text(data.get("card_id"), "kit card ID", MAX_ID_LENGTH)
+        notes = validate_text(data.get("notes"), "kit notes", MAX_NOTES_LENGTH)
+        kit_id = validate_text(data.get("kit_id"), "kit ID", MAX_ID_LENGTH)
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+    if not kit_id:
+        kit_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:MAX_ID_LENGTH]
+    if not kit_id:
+        return jsonify({"ok": False, "error": "Kit name must contain letters or numbers"}), 400
+
+    with db_lock:
+        conn = db_connect()
+        existing = conn.execute("SELECT id FROM kits WHERE id = ?", (kit_id,)).fetchone()
+        if not existing and not card_id:
+            conn.close()
+            return jsonify({"ok": False, "error": "A kit card ID is required for a new kit"}), 400
+        duplicate_card = conn.execute(
+            "SELECT id FROM kits WHERE card_id = ? AND id != ? AND card_id != ''",
+            (card_id, kit_id),
+        ).fetchone()
+        if duplicate_card:
+            conn.close()
+            return jsonify({"ok": False, "error": "That kit card is already assigned to another kit"}), 400
+
+        timestamp = now_iso()
+        active = 1 if parse_bool(data.get("active", True)) else 0
+        conn.execute(
+            """
+            INSERT INTO kits (id, name, card_id, active, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                card_id = excluded.card_id,
+                active = excluded.active,
+                notes = excluded.notes,
+                updated_at = excluded.updated_at
+            """,
+            (kit_id, name, card_id, active, notes, timestamp, timestamp),
+        )
+        add_audit_log(
+            conn,
+            account,
+            "kit_saved",
+            "kit",
+            kit_id,
+            {"name": name, "card_id": card_id, "active": bool(active)},
+        )
+        conn.commit()
+        kits = kit_rows(conn)
+        history = kit_checkout_history_rows(conn)
+        conn.close()
+
+    return jsonify({"ok": True, "kits": kits, "kit_checkouts": history})
+
+
+@app.post("/api/kits/<kit_id>/return")
+def manually_return_kit(kit_id):
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        checkout = conn.execute(
+            """
+            SELECT id, kit_id, kit_name, card_id, checked_out_at
+            FROM kit_checkouts
+            WHERE kit_id = ? AND returned_at = ''
+            """,
+            (kit_id,),
+        ).fetchone()
+        if not checkout:
+            conn.close()
+            return jsonify({"ok": False, "error": "Kit is not currently checked out"}), 404
+
+        returned_at = now_iso()
+        conn.execute(
+            """
+            UPDATE kit_checkouts
+            SET returned_at = ?, returned_by_card_id = ?
+            WHERE id = ?
+            """,
+            (returned_at, account["card_id"], checkout["id"]),
+        )
+        log_event(
+            conn,
+            checkout["card_id"],
+            "kit-checkout",
+            "Kit Checkout",
+            "kit",
+            "kit_manual_return",
+            details=f"{checkout['kit_name']} manually returned by {account['name']}",
+            event_time=returned_at,
+        )
+        add_audit_log(
+            conn,
+            account,
+            "kit_manually_returned",
+            "kit",
+            kit_id,
+            {"kit_name": checkout["kit_name"], "checkout_id": checkout["id"]},
+        )
+        conn.commit()
+        kits = kit_rows(conn)
+        history = kit_checkout_history_rows(conn)
+        conn.close()
+
+    return jsonify({"ok": True, "kits": kits, "kit_checkouts": history})
 
 
 @app.get("/api/pending-cards")
@@ -3563,6 +4022,80 @@ def save_card():
     )
 
 
+def parse_manual_checkout_time(data):
+    exited_at_value = validate_text(
+        data.get("exited_at"),
+        "exited_at",
+        64,
+        required=True,
+    )
+    exited_at = parse_iso(exited_at_value).replace(microsecond=0)
+    if exited_at > datetime.now(timezone.utc).replace(microsecond=0):
+        raise ValueError("Checkout time cannot be in the future")
+    return exited_at
+
+
+def checkout_active_person(conn, card_id, exited_at, account):
+    active_person = conn.execute(
+        """
+        SELECT card_id, entered_at, entry_door_id, entry_door_name
+        FROM active_people
+        WHERE card_id = ?
+        """,
+        (card_id,),
+    ).fetchone()
+    if not active_person:
+        return None
+
+    entered_at = parse_iso(active_person["entered_at"])
+    if exited_at < entered_at:
+        raise ValueError("Checkout time cannot be before entry time")
+
+    card = card_row(conn, card_id)
+    open_sessions = active_station_sessions_for_card(conn, card_id)
+    conn.execute("DELETE FROM active_people WHERE card_id = ?", (card_id,))
+
+    for session in open_sessions:
+        conn.execute("DELETE FROM active_sessions WHERE id = ?", (session["id"],))
+        log_event(
+            conn,
+            card_id,
+            session["station_id"],
+            session["station_name"],
+            "station",
+            "station_auto_out",
+            duration_seconds=elapsed_seconds(session["started_at"], exited_at),
+            details="Closed during manual checkout",
+            event_time=exited_at.isoformat(),
+        )
+
+    exit_event = log_event(
+        conn,
+        card_id,
+        active_person["entry_door_id"],
+        active_person["entry_door_name"],
+        "door",
+        "manual_exit",
+        duration_seconds=elapsed_seconds(active_person["entered_at"], exited_at),
+        details="Manual checkout",
+        event_time=exited_at.isoformat(),
+    )
+    add_audit_log(
+        conn,
+        account,
+        "person_manually_checked_out",
+        "person",
+        card_id,
+        {
+            "name": card_display(card, card_id),
+            "entered_at": active_person["entered_at"],
+            "exited_at": exited_at.isoformat(),
+            "closed_station_sessions": len(open_sessions),
+        },
+    )
+    return {"event": exit_event, "closed_station_sessions": len(open_sessions)}
+
+
 @app.post("/api/active-people/<card_id>/checkout")
 def manual_checkout_person(card_id):
     role, error = require_access("staff")
@@ -3573,92 +4106,77 @@ def manual_checkout_person(card_id):
     data = request_json()
     try:
         card_id = validate_text(card_id, "card_id", MAX_ID_LENGTH, required=True)
-        exited_at_value = validate_text(
-            data.get("exited_at"),
-            "exited_at",
-            64,
-            required=True,
-        )
-        exited_at = parse_iso(exited_at_value).replace(microsecond=0)
+        exited_at = parse_manual_checkout_time(data)
     except (ValueError, TypeError) as error:
         return jsonify({"ok": False, "error": f"Invalid checkout time: {error}"}), 400
 
-    if exited_at > datetime.now(timezone.utc).replace(microsecond=0):
-        return jsonify({"ok": False, "error": "Checkout time cannot be in the future"}), 400
+    with db_lock:
+        conn = db_connect()
+        try:
+            result = checkout_active_person(conn, card_id, exited_at, account)
+        except ValueError as error:
+            conn.close()
+            return jsonify({"ok": False, "error": str(error)}), 400
+        if not result:
+            conn.close()
+            return jsonify({"ok": False, "error": "Person is not currently inside"}), 404
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True, **result})
+
+
+@app.post("/api/active-people/checkout-bulk")
+def bulk_checkout_people():
+    role, error = require_access("staff")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    data = request_json()
+    raw_card_ids = data.get("card_ids")
+    if not isinstance(raw_card_ids, list) or not raw_card_ids:
+        return jsonify({"ok": False, "error": "Select one or more people to check out"}), 400
+    if len(raw_card_ids) > 500:
+        return jsonify({"ok": False, "error": "No more than 500 people can be checked out at once"}), 400
+    try:
+        card_ids = list(
+            dict.fromkeys(
+                validate_text(item, "card_id", MAX_ID_LENGTH, required=True)
+                for item in raw_card_ids
+            )
+        )
+        exited_at = parse_manual_checkout_time(data)
+    except (ValueError, TypeError) as error:
+        return jsonify({"ok": False, "error": f"Invalid bulk checkout: {error}"}), 400
 
     with db_lock:
         conn = db_connect()
-        active_person = conn.execute(
-            """
-            SELECT card_id, entered_at, entry_door_id, entry_door_name
-            FROM active_people
-            WHERE card_id = ?
-            """,
-            (card_id,),
-        ).fetchone()
-        if not active_person:
+        checked_out = []
+        try:
+            for card_id in card_ids:
+                result = checkout_active_person(conn, card_id, exited_at, account)
+                if result:
+                    checked_out.append(card_id)
+        except ValueError as error:
+            conn.rollback()
             conn.close()
-            return jsonify({"ok": False, "error": "Person is not currently inside"}), 404
-
-        entered_at = parse_iso(active_person["entered_at"])
-        if exited_at < entered_at:
+            return jsonify({"ok": False, "error": str(error)}), 400
+        if not checked_out:
             conn.close()
-            return jsonify(
-                {"ok": False, "error": "Checkout time cannot be before entry time"}
-            ), 400
-
-        card = card_row(conn, card_id)
-        open_sessions = active_station_sessions_for_card(conn, card_id)
-        conn.execute("DELETE FROM active_people WHERE card_id = ?", (card_id,))
-
-        for session in open_sessions:
-            conn.execute("DELETE FROM active_sessions WHERE id = ?", (session["id"],))
-            log_event(
-                conn,
-                card_id,
-                session["station_id"],
-                session["station_name"],
-                "station",
-                "station_auto_out",
-                duration_seconds=elapsed_seconds(session["started_at"], exited_at),
-                details="Closed during manual checkout",
-                event_time=exited_at.isoformat(),
-            )
-
-        exit_event = log_event(
-            conn,
-            card_id,
-            active_person["entry_door_id"],
-            active_person["entry_door_name"],
-            "door",
-            "manual_exit",
-            duration_seconds=elapsed_seconds(active_person["entered_at"], exited_at),
-            details="Manual checkout",
-            event_time=exited_at.isoformat(),
-        )
+            return jsonify({"ok": False, "error": "None of the selected people are currently inside"}), 404
         add_audit_log(
             conn,
             account,
-            "person_manually_checked_out",
-            "person",
-            card_id,
-            {
-                "name": card_display(card, card_id),
-                "entered_at": active_person["entered_at"],
-                "exited_at": exited_at.isoformat(),
-                "closed_station_sessions": len(open_sessions),
-            },
+            "people_bulk_checked_out",
+            "active_people",
+            "bulk",
+            {"card_ids": checked_out, "exited_at": exited_at.isoformat()},
         )
         conn.commit()
         conn.close()
 
-    return jsonify(
-        {
-            "ok": True,
-            "event": exit_event,
-            "closed_station_sessions": len(open_sessions),
-        }
-    )
+    return jsonify({"ok": True, "checked_out_count": len(checked_out)})
 
 
 @app.post("/api/warnings/clear")
@@ -3695,6 +4213,166 @@ def clear_warnings():
         conn.close()
 
     return jsonify({"ok": True, "dismissed_count": dismissed_count})
+
+
+def checkout_active_station_session(conn, session, ended_at, account):
+    session_id = session["id"]
+    conn.execute("DELETE FROM active_sessions WHERE id = ?", (session_id,))
+    event = log_event(
+        conn,
+        session["card_id"],
+        session["station_id"],
+        session["station_name"],
+        "station",
+        "station_manual_out",
+        duration_seconds=elapsed_seconds(session["started_at"], ended_at),
+        details="Closed by an admin from the dashboard",
+        event_time=ended_at.isoformat(),
+    )
+    add_audit_log(
+        conn,
+        account,
+        "station_session_manually_checked_out",
+        "station_session",
+        str(session_id),
+        {
+            "card_id": session["card_id"],
+            "station_id": session["station_id"],
+            "started_at": session["started_at"],
+            "ended_at": ended_at.isoformat(),
+        },
+    )
+    return event
+
+
+@app.post("/api/active-sessions/<int:session_id>/checkout")
+def manual_checkout_station_session(session_id):
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        session = conn.execute(
+            """
+            SELECT id, card_id, station_id, station_name, started_at
+            FROM active_sessions
+            WHERE id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        if not session:
+            conn.close()
+            return jsonify({"ok": False, "error": "Active station session not found"}), 404
+
+        event = checkout_active_station_session(
+            conn,
+            session,
+            datetime.now(timezone.utc).replace(microsecond=0),
+            account,
+        )
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True, "event": event})
+
+
+@app.post("/api/active-sessions/checkout-bulk")
+def bulk_checkout_station_sessions():
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    raw_session_ids = request_json().get("session_ids")
+    if not isinstance(raw_session_ids, list) or not raw_session_ids:
+        return jsonify({"ok": False, "error": "Select one or more station sessions to end"}), 400
+    if len(raw_session_ids) > 500:
+        return jsonify({"ok": False, "error": "No more than 500 station sessions can be ended at once"}), 400
+    try:
+        session_ids = list(dict.fromkeys(int(item) for item in raw_session_ids))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Station session IDs must be numbers"}), 400
+    if any(session_id < 1 for session_id in session_ids):
+        return jsonify({"ok": False, "error": "Station session IDs must be positive"}), 400
+
+    placeholders = ", ".join("?" for _ in session_ids)
+    with db_lock:
+        conn = db_connect()
+        sessions = conn.execute(
+            f"""
+            SELECT id, card_id, station_id, station_name, started_at
+            FROM active_sessions
+            WHERE id IN ({placeholders})
+            ORDER BY id
+            """,
+            session_ids,
+        ).fetchall()
+        if not sessions:
+            conn.close()
+            return jsonify({"ok": False, "error": "None of the selected station sessions are active"}), 404
+
+        ended_at = datetime.now(timezone.utc).replace(microsecond=0)
+        for session in sessions:
+            checkout_active_station_session(conn, session, ended_at, account)
+        add_audit_log(
+            conn,
+            account,
+            "station_sessions_bulk_checked_out",
+            "active_sessions",
+            "bulk",
+            {"session_ids": [session["id"] for session in sessions], "ended_at": ended_at.isoformat()},
+        )
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True, "checked_out_count": len(sessions)})
+
+
+@app.delete("/api/swipes/<int:swipe_event_id>")
+def delete_swipe_event(swipe_event_id):
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        event = conn.execute(
+            """
+            SELECT id, card_id, station_id, station_name, timestamp, action, warning, event_id
+            FROM swipe_events
+            WHERE id = ?
+            """,
+            (swipe_event_id,),
+        ).fetchone()
+        if not event:
+            conn.close()
+            return jsonify({"ok": False, "error": "Swipe record not found"}), 404
+
+        conn.execute("DELETE FROM warning_dismissals WHERE swipe_event_id = ?", (swipe_event_id,))
+        conn.execute("DELETE FROM swipe_events WHERE id = ?", (swipe_event_id,))
+        add_audit_log(
+            conn,
+            account,
+            "swipe_event_deleted",
+            "swipe_event",
+            str(swipe_event_id),
+            {
+                "card_id": event["card_id"],
+                "station_id": event["station_id"],
+                "station_name": event["station_name"],
+                "timestamp": event["timestamp"],
+                "action": event["action"],
+                "warning": event["warning"],
+                "event_id": event["event_id"],
+            },
+        )
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True})
 
 
 @app.delete("/api/cards/<card_id>")
@@ -4517,6 +5195,7 @@ def active_session_rows(conn):
     rows = conn.execute(
         """
         SELECT
+            active_sessions.id AS session_id,
             active_sessions.card_id,
             cards.name,
             cards.email,
@@ -4534,6 +5213,7 @@ def active_session_rows(conn):
     for row in rows:
         result.append(
             {
+                "session_id": row["session_id"],
                 "card_id": row["card_id"],
                 "name": row["name"] or "",
                 "email": row["email"] or "",
@@ -4565,6 +5245,7 @@ def recent_swipe_rows(conn, limit, query="", station_id="", warning_only=False):
     rows = conn.execute(
         f"""
         SELECT
+            swipe_events.id,
             swipe_events.card_id,
             cards.name,
             cards.email,
@@ -5246,6 +5927,7 @@ def station_status_csv():
 
 init_db()
 seed_stations()
+seed_kits()
 bootstrap_admin()
 
 

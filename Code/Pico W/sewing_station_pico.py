@@ -32,6 +32,9 @@ STATION_KIND = "station"
 # Hardware pins. These match the newer wiring in test.py.
 LIMIT_SWITCH_PIN = 5
 NEOPIXEL_PIN = 13
+# Optional piezo buzzer. Wire + to GP14 and - to GND.
+# Set to None to disable the buzzer without changing the rest of the reader.
+BUZZER_PIN = 14
 
 RFID_SCK = 18
 RFID_MISO = 16
@@ -55,6 +58,9 @@ next_queue_retry = 0
 
 limit_switch = Pin(LIMIT_SWITCH_PIN, Pin.IN, Pin.PULL_UP)
 pixel = neopixel.NeoPixel(Pin(NEOPIXEL_PIN), 1)
+buzzer = machine.PWM(Pin(BUZZER_PIN)) if BUZZER_PIN is not None else None
+if buzzer:
+    buzzer.duty_u16(0)
 
 COLORS = {
     "off": (0, 0, 0),
@@ -77,6 +83,37 @@ led_state = {
 def set_led(color):
     pixel[0] = COLORS[color]
     pixel.write()
+
+def beep(frequency, duration_ms):
+    if buzzer is None:
+        return
+    buzzer.freq(frequency)
+    buzzer.duty_u16(32768)
+    time.sleep_ms(duration_ms)
+    buzzer.duty_u16(0)
+
+
+def play_buzzer_signal(signal, action=""):
+    if signal == "unknown_card":
+        beep(660, 90)
+        time.sleep_ms(70)
+        beep(440, 150)
+    elif signal == "access_denied":
+        beep(330, 250)
+    elif signal == "server_error":
+        beep(220, 180)
+    elif signal == "cert_mode_pending":
+        beep(740, 90)
+    elif signal == "cert_success":
+        beep(880, 90)
+        time.sleep_ms(60)
+        beep(1175, 140)
+    elif action in ("station_out", "station_auto_out", "exit"):
+        beep(520, 120)
+    elif signal == "access_granted":
+        beep(784, 80)
+        time.sleep_ms(50)
+        beep(988, 120)
 
 
 def wifi_connected():
@@ -101,6 +138,8 @@ def set_led_mode(mode, duration_ms=0):
         set_led("blue")
     elif mode == "station_out":
         set_led("cyan")
+    elif mode == "unknown_card":
+        set_led("purple")
     elif mode == "access_denied":
         set_led("red")
     elif mode == "server_error":
@@ -131,6 +170,8 @@ def apply_server_led(result):
     signal = result.get("led_signal", "")
     action = result.get("action", "")
 
+    play_buzzer_signal(signal, action)
+
     if signal == "cert_mode_pending":
         set_led_mode("cert_mode_pending", 5000)
     elif signal == "cert_mode_armed":
@@ -139,6 +180,8 @@ def apply_server_led(result):
         set_led_mode("cert_success", 2000)
     elif signal == "server_error":
         set_led_mode("server_error", 2000)
+    elif signal == "unknown_card":
+        set_led_mode("unknown_card", 1600)
     elif signal == "access_denied":
         set_led_mode("access_denied", 1200)
     elif action in ("swipe_out", "station_out", "station_auto_out", "exit"):

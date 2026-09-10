@@ -64,6 +64,8 @@ class StationServerTests(unittest.TestCase):
                 "canvas_sync_tasks",
                 "active_sessions",
                 "active_people",
+                "kit_checkouts",
+                "kits",
                 "pending_card_dismissals",
                 "warning_dismissals",
                 "swipe_events",
@@ -81,7 +83,9 @@ class StationServerTests(unittest.TestCase):
             self.server.login_attempts.clear()
             self.server.security_audit_cooldowns.clear()
         self.server.cert_modes.clear()
+        self.server.kit_swipe_modes.clear()
         self.server.seed_stations()
+        self.server.seed_kits()
         self.server.bootstrap_admin()
         self.client = self.server.app.test_client()
         self.admin_token = self.login("admin", "AdminPass123")
@@ -847,6 +851,228 @@ class StationServerTests(unittest.TestCase):
             ],
         )
         self.assertEqual(audit_action, "person_manually_checked_out")
+
+    def test_dashboard_data_includes_people_inside(self):
+        self.create_card("inside-card", "B622", "Inside User", "inside@cpp.edu")
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            conn.execute(
+                """
+                INSERT INTO active_people (card_id, entered_at, entry_door_id, entry_door_name)
+                VALUES (?, ?, 'front-door', 'Front Door')
+                """,
+                ("inside-card", datetime.now(timezone.utc).replace(microsecond=0).isoformat()),
+            )
+            conn.commit()
+            conn.close()
+
+        response = self.client.get("/api/dashboard", headers=self.auth(self.admin_token))
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        people = response.get_json()["active_people"]
+        self.assertEqual(len(people), 1)
+        self.assertEqual(people[0]["card_id"], "inside-card")
+
+    def test_staff_can_bulk_checkout_people_and_close_their_station_sessions(self):
+        self.create_card("bulk-one", "B624", "Bulk One", "bulkone@cpp.edu")
+        self.create_card("bulk-two", "B625", "Bulk Two", "bulktwo@cpp.edu")
+        self.create_card(
+            "bulk-staff",
+            "B626",
+            "Bulk Staff",
+            "bulkstaff@cpp.edu",
+            designation="Staff",
+            login_role="staff",
+            password="StaffPass123",
+        )
+        staff_token = self.login("bulkstaff", "StaffPass123")
+        entered_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=20)
+        exited_at = entered_at + timedelta(minutes=10)
+
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            for card_id in ("bulk-one", "bulk-two"):
+                conn.execute(
+                    """
+                    INSERT INTO active_people (card_id, entered_at, entry_door_id, entry_door_name)
+                    VALUES (?, ?, 'front-door', 'Front Door')
+                    """,
+                    (card_id, entered_at.isoformat()),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO active_sessions (card_id, station_id, station_name, started_at)
+                    VALUES (?, 'soldering', 'Soldering', ?)
+                    """,
+                    (card_id, entered_at.isoformat()),
+                )
+            conn.commit()
+            conn.close()
+
+        response = self.client.post(
+            "/api/active-people/checkout-bulk",
+            headers=self.auth(staff_token),
+            json={"card_ids": ["bulk-one", "bulk-two"], "exited_at": exited_at.isoformat()},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["checked_out_count"], 2)
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM active_people").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM active_sessions").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM audit_log WHERE action = 'people_bulk_checked_out'"
+                ).fetchone()[0],
+                1,
+            )
+        finally:
+            conn.close()
+
+    def test_admin_can_end_one_active_station_session(self):
+        self.create_card("session-card", "B623", "Session User", "session@cpp.edu")
+        started_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            cursor = conn.execute(
+                """
+                INSERT INTO active_sessions (card_id, station_id, station_name, started_at)
+                VALUES (?, 'soldering', 'Soldering', ?)
+                """,
+                ("session-card", started_at.isoformat()),
+            )
+            session_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+        response = self.client.post(
+            f"/api/active-sessions/{session_id}/checkout",
+            headers=self.auth(self.admin_token),
+            json={},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["event"]["action"], "station_manual_out")
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM active_sessions WHERE id = ?", (session_id,)).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT action FROM audit_log WHERE target_id = ? ORDER BY id DESC LIMIT 1",
+                    (str(session_id),),
+                ).fetchone()[0],
+                "station_session_manually_checked_out",
+            )
+        finally:
+            conn.close()
+
+    def test_admin_can_bulk_end_station_sessions(self):
+        self.create_card("bulk-session-one", "B627", "Station One", "stationone@cpp.edu")
+        self.create_card("bulk-session-two", "B628", "Station Two", "stationtwo@cpp.edu")
+        started_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            session_ids = []
+            for card_id in ("bulk-session-one", "bulk-session-two"):
+                cursor = conn.execute(
+                    """
+                    INSERT INTO active_sessions (card_id, station_id, station_name, started_at)
+                    VALUES (?, 'laser-cutting', 'Laser Cutting', ?)
+                    """,
+                    (card_id, started_at.isoformat()),
+                )
+                session_ids.append(cursor.lastrowid)
+            conn.commit()
+            conn.close()
+
+        response = self.client.post(
+            "/api/active-sessions/checkout-bulk",
+            headers=self.auth(self.admin_token),
+            json={"session_ids": session_ids},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["checked_out_count"], 2)
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM active_sessions").fetchone()[0], 0)
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM audit_log WHERE action = 'station_sessions_bulk_checked_out'"
+                ).fetchone()[0],
+                1,
+            )
+        finally:
+            conn.close()
+
+    def test_kit_card_then_user_card_checks_out_and_returns_kit(self):
+        self.create_card("kit-user-card", "B629", "Kit User", "kituser@cpp.edu")
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            conn.execute(
+                "UPDATE kits SET card_id = ?, updated_at = ? WHERE id = 'marker-kit'",
+                ("marker-kit-card", self.server.now_iso()),
+            )
+            conn.commit()
+            conn.close()
+
+        selected = self.swipe("marker-kit-card", "kit-checkout", "kit-select").get_json()
+        self.assertTrue(selected["allowed"])
+        self.assertEqual(selected["action"], "kit_pending_user")
+
+        checkout = self.swipe("kit-user-card", "kit-checkout", "kit-user").get_json()
+        self.assertTrue(checkout["allowed"])
+        self.assertEqual(checkout["action"], "kit_checkout")
+
+        selected_again = self.swipe("marker-kit-card", "kit-checkout", "kit-return-select").get_json()
+        self.assertEqual(selected_again["action"], "kit_pending_user")
+        returned = self.swipe("kit-user-card", "kit-checkout", "kit-return-user").get_json()
+        self.assertTrue(returned["allowed"])
+        self.assertEqual(returned["action"], "kit_return")
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            checkout_row = conn.execute(
+                "SELECT returned_at FROM kit_checkouts WHERE kit_id = 'marker-kit'"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertTrue(checkout_row[0])
+
+    def test_admin_can_delete_a_swipe_event(self):
+        swipe = self.swipe("unknown-delete-card", "front-door", "delete-swipe-event")
+        self.assertEqual(swipe.status_code, 200, swipe.get_data(as_text=True))
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            swipe_event_id = conn.execute(
+                "SELECT id FROM swipe_events WHERE event_id = 'delete-swipe-event'"
+            ).fetchone()[0]
+            conn.close()
+
+        deleted = self.client.delete(
+            f"/api/swipes/{swipe_event_id}",
+            headers=self.auth(self.admin_token),
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.get_data(as_text=True))
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM swipe_events WHERE id = ?", (swipe_event_id,)).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT action FROM audit_log WHERE target_id = ? ORDER BY id DESC LIMIT 1",
+                    (str(swipe_event_id),),
+                ).fetchone()[0],
+                "swipe_event_deleted",
+            )
+        finally:
+            conn.close()
 
     def test_staff_can_clear_live_warnings_without_deleting_swipe_history(self):
         self.create_card(

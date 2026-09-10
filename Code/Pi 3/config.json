@@ -11,6 +11,11 @@
       "kind": "door"
     },
     {
+      "id": "kit-checkout",
+      "name": "Kit Checkout",
+      "kind": "kit"
+    },
+    {
       "id": "3d-printing",
       "name": "3D Printing",
       "kind": "station"

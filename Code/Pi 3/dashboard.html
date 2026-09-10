@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Makerspace Operations</title>
   <style>
+    @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap");
+
     :root {
       color-scheme: dark;
       --bg: #101214;
@@ -1524,6 +1526,576 @@
         width: 100%;
       }
     }
+
+    /* Industrial operations console refresh */
+    :root {
+      color-scheme: dark;
+      --bg: #090b0b;
+      --panel: #151716;
+      --ink: #ece7da;
+      --muted: #a39d8f;
+      --line: #38372f;
+      --green: #4fe3a7;
+      --blue: #80c7ff;
+      --red: #ff6b57;
+      --cyan: #52d5c8;
+      --amber: #ffb33f;
+      --focus: #ffb33f;
+      --soft-blue: #132637;
+      --soft-cyan: #102c2b;
+      --soft-green: #102c20;
+      --soft-amber: #372713;
+      --soft-gray: #252622;
+      --soft-red: #371916;
+      --surface: #1d201d;
+      --surface-strong: #252823;
+      --field-bg: #0f1110;
+      --field-border: #49483e;
+      --heading-ink: #fff7e8;
+      --panel-title: #f6eddb;
+      --row-alt: #191c19;
+      --row-hover: #232821;
+      --tab-bg: rgba(13, 15, 14, 0.9);
+      --form-actions-bg: rgba(9, 11, 11, 0.58);
+      --warning-panel-bg: #271b0e;
+      --warning-panel-border: #bb7a23;
+      --staff-bg: #351d18;
+      --staff-ink: #ff9a73;
+      --volunteer-ink: #73e7ba;
+      --shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 28px rgba(0, 0, 0, 0.26);
+      --shadow-md: 0 1px 0 rgba(255, 255, 255, 0.05), 0 24px 60px rgba(0, 0, 0, 0.42);
+      --radius: 5px;
+      --radius-sm: 3px;
+    }
+
+    html {
+      min-height: 100%;
+      background: #090b0b;
+    }
+
+    body {
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(255, 179, 63, 0.08) 1px, transparent 1px) 0 0 / 74px 74px,
+        linear-gradient(rgba(236, 231, 218, 0.035) 1px, transparent 1px) 0 0 / 100% 37px,
+        radial-gradient(circle at 80% 8%, rgba(79, 227, 167, 0.12), transparent 30%),
+        linear-gradient(145deg, #090b0b 0%, #101411 42%, #19140e 100%);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Aptos", "Trebuchet MS", sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: -1;
+      opacity: 0.52;
+      background-image:
+        repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 7px),
+        linear-gradient(180deg, rgba(255,255,255,0.03), transparent 26%);
+      mix-blend-mode: screen;
+    }
+
+    main {
+      width: min(1440px, calc(100vw - 40px));
+      margin: 18px auto 48px;
+    }
+
+    header {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(260px, 0.82fr) minmax(480px, 1.18fr);
+      align-items: stretch;
+      gap: 0;
+      margin-bottom: 14px;
+      padding: 0;
+      overflow: hidden;
+      background: rgba(17, 19, 17, 0.88);
+      border: 1px solid rgba(255, 179, 63, 0.34);
+      border-radius: 2px 14px 2px 14px;
+      box-shadow: var(--shadow-md);
+      backdrop-filter: blur(18px);
+    }
+
+    header::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 9px;
+      background: repeating-linear-gradient(
+        180deg,
+        var(--amber) 0 12px,
+        #14110b 12px 24px
+      );
+    }
+
+    header > div:first-child {
+      display: flex;
+      align-items: center;
+      padding: 24px 24px 24px 32px;
+      background:
+        linear-gradient(135deg, rgba(255, 179, 63, 0.16), transparent 42%),
+        rgba(10, 12, 11, 0.72);
+    }
+
+    h1,
+    h2,
+    h3,
+    .metric strong,
+    .analytics-metric strong {
+      font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 12ch;
+      color: var(--heading-ink);
+      font-size: 34px;
+      line-height: 0.96;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      padding: 13px 16px 12px;
+      background:
+        linear-gradient(90deg, rgba(255, 179, 63, 0.12), transparent 56%),
+        var(--surface);
+      border-bottom-color: rgba(255, 179, 63, 0.2);
+      color: var(--panel-title);
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+
+    label,
+    th,
+    .metric span,
+    .analytics-metric span,
+    .permission-stations-header span,
+    .permission-list .checkline span {
+      letter-spacing: 0.08em;
+    }
+
+    .header-tools {
+      align-items: stretch;
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .access-panel {
+      flex: 1 1 auto;
+      align-items: flex-end;
+      padding: 12px;
+      background: rgba(9, 11, 11, 0.5);
+      border-color: rgba(236, 231, 218, 0.16);
+      border-radius: 3px 12px 3px 3px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+    }
+
+    #connection {
+      align-self: stretch;
+      display: inline-flex;
+      align-items: center;
+      min-height: 42px;
+      padding: 0 12px;
+      border: 1px solid rgba(79, 227, 167, 0.22);
+      border-radius: 12px 2px 12px 2px;
+      background: rgba(16, 44, 32, 0.34);
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    textarea {
+      border-color: rgba(236, 231, 218, 0.16);
+      border-radius: 2px;
+      background: rgba(10, 12, 11, 0.8);
+      color: var(--ink);
+    }
+
+    input:hover,
+    select:hover,
+    textarea:hover {
+      border-color: rgba(255, 179, 63, 0.42);
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus,
+    button:focus-visible {
+      outline: 2px solid rgba(255, 179, 63, 0.45);
+      outline-offset: 2px;
+      border-color: var(--amber);
+      box-shadow: 0 0 0 4px rgba(255, 179, 63, 0.1);
+    }
+
+    button {
+      border-radius: 2px;
+      border-color: rgba(236, 231, 218, 0.18);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.05), transparent),
+        #151816;
+      color: var(--ink);
+      box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.42);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      background:
+        linear-gradient(180deg, rgba(255, 179, 63, 0.12), transparent),
+        #20241f;
+      border-color: rgba(255, 179, 63, 0.58);
+    }
+
+    button.primary {
+      border-color: #ffcb73;
+      background: linear-gradient(180deg, #ffc86b, #d47e20);
+      color: #170f05;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.24);
+    }
+
+    button.primary:hover {
+      border-color: #ffe0a3;
+      background: linear-gradient(180deg, #ffd98f, #e58b25);
+    }
+
+    button.danger {
+      border-color: rgba(255, 107, 87, 0.58);
+      background:
+        linear-gradient(180deg, rgba(255, 107, 87, 0.2), transparent),
+        #241210;
+      color: #ff8d7c;
+    }
+
+    button.danger:hover {
+      border-color: var(--red);
+      background:
+        linear-gradient(180deg, rgba(255, 107, 87, 0.3), transparent),
+        #321715;
+    }
+
+    .tabs {
+      position: sticky;
+      top: 8px;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 0;
+      margin-bottom: 18px;
+      padding: 0;
+      overflow: hidden;
+      border-color: rgba(236, 231, 218, 0.18);
+      border-radius: 13px 2px 13px 2px;
+      background: var(--tab-bg);
+      backdrop-filter: blur(16px);
+    }
+
+    .tab-button {
+      min-width: 0;
+      border: 0;
+      border-right: 1px solid rgba(236, 231, 218, 0.12);
+      border-radius: 0;
+      padding: 12px 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .tab-button:last-child {
+      border-right: 0;
+    }
+
+    .tab-button.active {
+      background:
+        linear-gradient(180deg, rgba(255, 179, 63, 0.22), rgba(255, 179, 63, 0.06)),
+        #181916;
+      color: var(--heading-ink);
+      box-shadow: inset 0 -3px 0 var(--amber);
+    }
+
+    .tab-button:hover {
+      background: rgba(255, 255, 255, 0.055);
+      color: var(--heading-ink);
+    }
+
+    .summary {
+      grid-template-columns: 1.28fr 0.95fr 0.82fr 1.05fr;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .metric,
+    .panel,
+    .analytics-metric,
+    .permission-card,
+    .pending-row,
+    .account-fields,
+    .permission-empty,
+    .modal-card,
+    .toast {
+      border-color: rgba(236, 231, 218, 0.16);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric,
+    .panel {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 38%),
+        rgba(21, 23, 22, 0.92);
+      backdrop-filter: blur(10px);
+    }
+
+    .metric {
+      min-height: 116px;
+      padding: 19px 16px 16px;
+      border-radius: 2px 14px 2px 2px;
+    }
+
+    .metric::before {
+      inset: 0 auto 0 0;
+      width: 5px;
+      height: auto;
+      background: var(--amber);
+    }
+
+    .metric:nth-child(1) {
+      transform: translateY(6px);
+    }
+
+    .metric:nth-child(2) {
+      transform: translateY(-2px);
+    }
+
+    .metric:nth-child(4) {
+      transform: translateY(4px);
+    }
+
+    .metric span {
+      color: #beb6a6;
+      font-size: 11px;
+    }
+
+    .metric strong {
+      color: var(--heading-ink);
+      font-size: 44px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric.metric-alert {
+      background:
+        repeating-linear-gradient(135deg, rgba(255, 179, 63, 0.08) 0 8px, transparent 8px 18px),
+        var(--warning-panel-bg);
+    }
+
+    .grid {
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    #tab-dashboard > .grid #station-usage-panel {
+      grid-column: 1 / -1;
+      max-width: 900px;
+    }
+
+    .panel {
+      border-radius: 2px 12px 2px 2px;
+    }
+
+    .panel-heading,
+    .toolbar,
+    .modal-card h2 {
+      background:
+        linear-gradient(90deg, rgba(255, 179, 63, 0.1), transparent 55%),
+        rgba(29, 32, 29, 0.96);
+      border-bottom-color: rgba(236, 231, 218, 0.13);
+    }
+
+    .toolbar {
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      min-height: 22px;
+      border: 1px solid currentColor;
+      border-radius: 2px 9px 2px 9px;
+      background: transparent;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+    }
+
+    .tab-badge {
+      border-radius: 2px 8px 2px 8px;
+      background: var(--amber);
+      color: #1a1005;
+    }
+
+    .table-scroll {
+      scrollbar-color: rgba(255, 179, 63, 0.55) transparent;
+    }
+
+    table {
+      font-variant-numeric: tabular-nums;
+    }
+
+    th {
+      background: #111310;
+      color: #c7bda9;
+    }
+
+    td {
+      color: #e8e0d0;
+    }
+
+    tbody tr:nth-child(even) td {
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    tbody tr:hover td {
+      background: rgba(255, 179, 63, 0.085);
+    }
+
+    .warning-panel,
+    .warning-panel.has-warnings {
+      border-color: rgba(255, 179, 63, 0.52);
+      background:
+        repeating-linear-gradient(135deg, rgba(255, 179, 63, 0.06) 0 7px, transparent 7px 16px),
+        #21170d;
+    }
+
+    .analytics-header {
+      align-items: center;
+      padding: 16px 0 4px;
+      border-top: 1px solid rgba(255, 179, 63, 0.22);
+    }
+
+    .analytics-summary {
+      grid-template-columns: 1.2fr 0.85fr 1fr 0.85fr 1.05fr 1.05fr;
+      gap: 10px;
+    }
+
+    .analytics-metric {
+      min-height: 96px;
+      border-radius: 2px 10px 2px 2px;
+      background: rgba(21, 23, 22, 0.92);
+    }
+
+    .analytics-metric strong {
+      font-size: 22px;
+    }
+
+    .chart-track {
+      height: 10px;
+      border-radius: 1px;
+      background: #0c0e0d;
+    }
+
+    .chart-fill {
+      background: linear-gradient(90deg, var(--amber), #ffe0a3);
+    }
+
+    .chart-fill.sessions {
+      background: linear-gradient(90deg, var(--green), #b9ffd9);
+    }
+
+    .chart-fill.traffic {
+      background: linear-gradient(90deg, var(--cyan), #a5fff5);
+    }
+
+    .lookup-results,
+    .permission-list .checkline,
+    .toggle-row,
+    .pending-row,
+    .account-fields {
+      background: rgba(10, 12, 11, 0.72);
+    }
+
+    .lookup-results button:hover,
+    .lookup-results button:focus-visible {
+      background: rgba(255, 179, 63, 0.12);
+    }
+
+    .switch-track {
+      border-radius: 999px;
+    }
+
+    .toast {
+      border-radius: 2px 12px 2px 12px;
+      background: rgba(18, 20, 18, 0.96);
+      backdrop-filter: blur(16px);
+    }
+
+    .modal-backdrop {
+      background:
+        repeating-linear-gradient(135deg, rgba(255, 179, 63, 0.08) 0 10px, transparent 10px 24px),
+        rgba(4, 5, 5, 0.78);
+      backdrop-filter: blur(6px);
+    }
+
+    @media (max-width: 1080px) {
+      header {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        max-width: none;
+      }
+
+      .summary,
+      .analytics-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .metric:nth-child(n) {
+        transform: none;
+      }
+
+      .tabs {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 880px) {
+      main {
+        width: min(100vw - 20px, 1200px);
+      }
+
+      header {
+        display: flex;
+      }
+
+      header > div:first-child {
+        width: 100%;
+      }
+
+      .tabs {
+        display: none;
+      }
+
+      .tab-menu {
+        display: block;
+        margin-bottom: 14px;
+      }
+    }
+
+    @media (max-width: 620px) {
+      main {
+        width: min(100vw - 14px, 1200px);
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .summary,
+      .analytics-summary {
+        grid-template-columns: 1fr;
+      }
+
+      .metric strong {
+        font-size: 38px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1558,13 +2130,14 @@
         Cards
         <span id="pending-card-count" class="tab-badge hidden">0</span>
       </button>
+      <button class="tab-button hidden" data-tab="kits" type="button">Kits</button>
       <button class="tab-button hidden" data-tab="canvas" type="button">
         Canvas Queue
         <span id="canvas-queue-count" class="tab-badge hidden">0</span>
       </button>
       <button class="tab-button hidden" data-tab="admin" type="button">Admin</button>
     </nav>
-    <div class="tab-menu"><label for="mobile-tab-menu">View</label><select id="mobile-tab-menu"><option value="dashboard">Live</option><option value="swipes" hidden>Swipes</option><option value="certifications" hidden>Certifications</option><option value="cards" hidden>Cards</option><option value="canvas" hidden>Canvas Queue</option><option value="admin" hidden>Admin</option></select></div>
+    <div class="tab-menu"><label for="mobile-tab-menu">View</label><select id="mobile-tab-menu"><option value="dashboard">Live</option><option value="swipes" hidden>Swipes</option><option value="certifications" hidden>Certifications</option><option value="cards" hidden>Cards</option><option value="kits" hidden>Kits</option><option value="canvas" hidden>Canvas Queue</option><option value="admin" hidden>Admin</option></select></div>
 
     <section id="tab-dashboard" class="tab-panel active" role="tabpanel">
       <section class="summary">
@@ -1587,23 +2160,6 @@
       </section>
 
       <section class="grid">
-        <div id="people-panel" class="panel">
-          <h2>People Inside</h2>
-          <div class="table-scroll stack-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Door</th>
-                  <th>Inside For</th>
-                  <th id="people-action-header" class="hidden">Checkout</th>
-                </tr>
-              </thead>
-              <tbody id="people-body"></tbody>
-            </table>
-          </div>
-        </div>
-
         <div id="station-usage-panel" class="panel">
           <h2>Station Usage</h2>
           <div class="table-scroll stack-table">
@@ -1622,22 +2178,6 @@
       </section>
 
       <section class="grid">
-        <div id="active-sessions-panel" class="panel">
-          <h2>Active Station Sessions</h2>
-          <div class="table-scroll stack-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Station</th>
-                  <th>Elapsed</th>
-                </tr>
-              </thead>
-              <tbody id="sessions-body"></tbody>
-            </table>
-          </div>
-        </div>
-
         <div id="warnings-panel" class="panel warning-panel">
           <div class="panel-heading">
             <h2>Warnings</h2>
@@ -1683,6 +2223,7 @@
                 <th>Duration</th>
                 <th>Inside</th>
                 <th>Warning</th>
+                <th id="swipe-action-header" class="hidden">Action</th>
               </tr>
             </thead>
             <tbody id="swipes-body"></tbody>
@@ -1765,6 +2306,72 @@
       </section>
     </section>
 
+    <section id="tab-kits" class="tab-panel" role="tabpanel">
+      <section class="grid">
+        <div id="kit-checkout-panel" class="panel full-row">
+          <h2>Kit Checkout</h2>
+          <p class="panel-note">At the kit reader, swipe a registered kit card first, then the user's active card within 15 seconds. Swiping the same pair again returns that kit.</p>
+          <div class="table-scroll wide-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Kit</th>
+                  <th>Kit Card</th>
+                  <th>Status</th>
+                  <th>Checked Out To</th>
+                  <th>Since</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="kits-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="kit-master-panel" class="panel full-row hidden">
+          <h2>Kit Master List</h2>
+          <form id="kit-form">
+            <input id="kit-id" type="hidden">
+            <div class="form-grid">
+              <div>
+                <label for="kit-name">Kit Name</label>
+                <input id="kit-name" maxlength="200" required placeholder="Kit name">
+              </div>
+              <div>
+                <label for="kit-card-id">Kit Card ID</label>
+                <input id="kit-card-id" maxlength="128" required autocomplete="off" placeholder="Scan or enter kit card ID">
+              </div>
+              <div>
+                <label class="checkline"><input id="kit-active" type="checkbox" checked><span>Kit is active</span></label>
+              </div>
+            </div>
+            <div class="form-actions">
+              <span id="kit-status" class="subtle" aria-live="polite"></span>
+              <button id="clear-kit" type="button">Clear</button>
+              <button class="primary" type="submit">Save Kit</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="kit-history-panel" class="panel full-row">
+          <h2>Recent Kit Activity</h2>
+          <div class="table-scroll wide-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Kit</th>
+                  <th>Person</th>
+                  <th>Checked Out</th>
+                  <th>Returned</th>
+                </tr>
+              </thead>
+              <tbody id="kit-history-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </section>
+
     <section id="tab-canvas" class="tab-panel" role="tabpanel">
       <section class="grid">
         <section id="canvas-import-panel" class="panel full-row hidden">
@@ -1806,6 +2413,46 @@
 
     <section id="tab-admin" class="tab-panel" role="tabpanel">
       <section class="grid">
+        <div id="people-panel" class="panel">
+          <div class="panel-heading">
+            <h2>People Inside</h2>
+            <button id="bulk-people-checkout" class="danger" type="button">Check out everyone</button>
+          </div>
+          <div class="table-scroll stack-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Door</th>
+                  <th>Inside For</th>
+                  <th id="people-action-header" class="hidden">Checkout</th>
+                </tr>
+              </thead>
+              <tbody id="people-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="active-sessions-panel" class="panel">
+          <div class="panel-heading">
+            <h2>Active Station Sessions</h2>
+            <button id="bulk-session-checkout" class="danger" type="button">End all sessions</button>
+          </div>
+          <div class="table-scroll stack-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Station</th>
+                  <th>Elapsed</th>
+                  <th id="session-action-header" class="hidden">Action</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body"></tbody>
+            </table>
+          </div>
+        </div>
+
         <section id="analytics-panel" class="full-row hidden">
           <div class="analytics-header">
             <div>
@@ -2091,6 +2738,8 @@
       stations: [],
       readers: [],
       certifications: [],
+      kits: [],
+      kitCheckouts: [],
       certifyPermissions: [],
       canvasSyncTasks: [],
       auditLog: [],
@@ -2109,6 +2758,7 @@
       certStationFilter: "",
       certifyPermissionFilter: "",
       selectedCardId: "",
+      selectedKitId: "",
       selectedCardPersonRef: "",
       selectedCertCardId: "",
       selectedCertPersonFilterCardId: "",
@@ -2116,6 +2766,7 @@
       selectedCertStationFilterStationId: "",
       expandedCertificationCards: new Set(),
       dashboardRequestInFlight: false,
+      dashboardRefreshQueued: false,
       adminRequestInFlight: false,
       analyticsRequestInFlight: false,
       pendingCardsRequestInFlight: false,
@@ -2140,9 +2791,12 @@
     const lastSwipe = document.getElementById("last-swipe");
     const peoplePanel = document.getElementById("people-panel");
     const peopleActionHeader = document.getElementById("people-action-header");
+    const bulkPeopleCheckoutButton = document.getElementById("bulk-people-checkout");
     const stationUsagePanel = document.getElementById("station-usage-panel");
     const stationPeopleHeader = document.getElementById("station-people-header");
     const activeSessionsPanel = document.getElementById("active-sessions-panel");
+    const sessionActionHeader = document.getElementById("session-action-header");
+    const bulkSessionCheckoutButton = document.getElementById("bulk-session-checkout");
     const warningsPanel = document.getElementById("warnings-panel");
     const clearWarningsButton = document.getElementById("clear-warnings");
     const recentSwipesPanel = document.getElementById("recent-swipes-panel");
@@ -2169,11 +2823,16 @@
     const sessionsBody = document.getElementById("sessions-body");
     const warningsBody = document.getElementById("warnings-body");
     const swipesBody = document.getElementById("swipes-body");
+    const swipeActionHeader = document.getElementById("swipe-action-header");
     const auditPanel = document.getElementById("audit-panel");
     const auditBody = document.getElementById("audit-body");
     const cardsBody = document.getElementById("cards-body");
     const certificationsHead = document.getElementById("certifications-head");
     const certificationsBody = document.getElementById("certifications-body");
+    const kitsBody = document.getElementById("kits-body");
+    const kitHistoryBody = document.getElementById("kit-history-body");
+    const kitMasterPanel = document.getElementById("kit-master-panel");
+    const kitStatus = document.getElementById("kit-status");
     const certCardSearch = document.getElementById("cert-card-search");
     const certCardResults = document.getElementById("cert-card-results");
     const certStationSearch = document.getElementById("cert-station-search");
@@ -2226,6 +2885,7 @@
     const confirmCancel = document.getElementById("confirm-cancel");
     const confirmAccept = document.getElementById("confirm-accept");
     const checkoutModal = document.getElementById("checkout-modal");
+    const checkoutTitle = document.getElementById("checkout-title");
     const checkoutMessage = document.getElementById("checkout-message");
     const checkoutTime = document.getElementById("checkout-time");
     const checkoutCancel = document.getElementById("checkout-cancel");
@@ -2605,6 +3265,7 @@
       setTabVisible("swipes", elevated);
       setTabVisible("certifications", loggedIn);
       setTabVisible("cards", elevated);
+      setTabVisible("kits", elevated);
       setTabVisible("canvas", elevated);
       setTabVisible("admin", elevated);
 
@@ -3371,21 +4032,27 @@
       updateTabVisibility(role || "public");
 
       warningsMetric.classList.toggle("hidden", !canViewFull);
-      peoplePanel.classList.toggle("hidden", !canViewPeople);
+      peoplePanel.classList.toggle("hidden", !canViewFull);
       peopleActionHeader.classList.toggle("hidden", !canViewFull);
+      bulkPeopleCheckoutButton.classList.toggle("hidden", !canViewFull);
       stationUsagePanel.classList.remove("hidden");
       stationPeopleHeader.classList.toggle("hidden", !canViewFull);
       activeSessionsPanel.classList.toggle("hidden", !canViewFull);
+      sessionActionHeader.classList.toggle("hidden", role !== "admin");
+      bulkSessionCheckoutButton.classList.toggle("hidden", role !== "admin");
       warningsPanel.classList.toggle("hidden", !canViewFull);
       clearWarningsButton.classList.toggle("hidden", !canViewFull);
       recentSwipesPanel.classList.toggle("hidden", !canViewFull);
       downloadSwipesButton.classList.toggle("hidden", !canViewFull);
       downloadAuditButton.classList.toggle("hidden", role !== "admin");
+      swipeActionHeader.classList.toggle("hidden", role !== "admin");
     }
 
     function openManualCheckoutDialog(cardId, name) {
       if (!["admin", "staff"].includes(state.role)) return;
       state.manualCheckoutTarget = { cardId, name };
+      checkoutTitle.textContent = "Manual Checkout";
+      checkoutAccept.textContent = "Check out";
       checkoutMessage.textContent = `Set the exit time for ${name || "this person"}. Any open station sessions will close at the same time.`;
       checkoutTime.value = localDateTimeInputValue();
       checkoutModal.classList.remove("hidden");
@@ -3396,6 +4063,19 @@
       checkoutModal.classList.add("hidden");
       state.manualCheckoutTarget = null;
       checkoutTime.value = "";
+      checkoutTitle.textContent = "Manual Checkout";
+      checkoutAccept.textContent = "Check out";
+    }
+
+    function openBulkCheckoutDialog(people) {
+      if (!["admin", "staff"].includes(state.role) || !people.length) return;
+      state.manualCheckoutTarget = { cardIds: people.map(person => person.card_id) };
+      checkoutTitle.textContent = "Bulk Checkout";
+      checkoutAccept.textContent = "Check out everyone";
+      checkoutMessage.textContent = `Set one exit time for all ${people.length} people currently inside. Any open station sessions for them will close at the same time.`;
+      checkoutTime.value = localDateTimeInputValue();
+      checkoutModal.classList.remove("hidden");
+      checkoutTime.focus();
     }
 
     async function submitManualCheckout() {
@@ -3409,9 +4089,18 @@
 
       checkoutAccept.disabled = true;
       try {
-        await postJson(`/api/active-people/${encodeURIComponent(target.cardId)}/checkout`, {
-          exited_at: exitDate.toISOString(),
-        });
+        if (target.cardIds) {
+          const data = await postJson("/api/active-people/checkout-bulk", {
+            card_ids: target.cardIds,
+            exited_at: exitDate.toISOString(),
+          });
+          showToast(`${data.checked_out_count || 0} people checked out`);
+        } else {
+          await postJson(`/api/active-people/${encodeURIComponent(target.cardId)}/checkout`, {
+            exited_at: exitDate.toISOString(),
+          });
+          showToast("Person checked out");
+        }
         closeManualCheckoutDialog();
         await refreshDashboard();
       } catch (error) {
@@ -3443,6 +4132,68 @@
       }
     }
 
+    async function endStationSession(session) {
+      if (state.role !== "admin") return;
+      const confirmed = await showConfirmDialog({
+        title: "End Station Session",
+        message: `End ${session.station_name} for ${session.display_name || session.name || "this person"} now?`,
+        confirmText: "End session",
+        danger: true,
+      });
+      if (!confirmed) return;
+
+      try {
+        await postJson(`/api/active-sessions/${encodeURIComponent(session.session_id)}/checkout`, {});
+        await refreshDashboard();
+        showToast("Station session ended");
+      } catch (error) {
+        window.alert(error.message || "Could not end this station session.");
+      }
+    }
+
+    async function endAllStationSessions(sessions) {
+      if (state.role !== "admin" || !sessions.length) return;
+      const confirmed = await showConfirmDialog({
+        title: "End All Station Sessions",
+        message: `End all ${sessions.length} active station session${sessions.length === 1 ? "" : "s"} now? This records a manual station checkout for each session.`,
+        confirmText: "End all sessions",
+        danger: true,
+      });
+      if (!confirmed) return;
+
+      bulkSessionCheckoutButton.disabled = true;
+      try {
+        const data = await postJson("/api/active-sessions/checkout-bulk", {
+          session_ids: sessions.map(session => session.session_id),
+        });
+        await refreshDashboard();
+        showToast(`${data.checked_out_count || 0} station sessions ended`);
+      } catch (error) {
+        window.alert(error.message || "Could not end the active station sessions.");
+      } finally {
+        bulkSessionCheckoutButton.disabled = false;
+      }
+    }
+
+    async function deleteSwipe(swipe) {
+      if (state.role !== "admin") return;
+      const confirmed = await showConfirmDialog({
+        title: "Delete Swipe Record",
+        message: `Delete this ${actionLabel(swipe.action)} record for ${swipe.display_name || swipe.name || "this card"}? This cannot be undone.`,
+        confirmText: "Delete swipe",
+        danger: true,
+      });
+      if (!confirmed) return;
+
+      try {
+        await deleteJson(`/api/swipes/${encodeURIComponent(swipe.id)}`);
+        await refreshDashboard();
+        showToast("Swipe record deleted");
+      } catch (error) {
+        window.alert(error.message || "Could not delete this swipe record.");
+      }
+    }
+
     function renderDashboard(data) {
       const stations = data.stations || [];
       const activePeople = data.active_people || [];
@@ -3451,6 +4202,8 @@
       const warnings = data.warnings || [];
       const canViewStationPeople = ["admin", "staff"].includes(dashboardRole(data));
       const canManuallyCheckout = ["admin", "staff"].includes(dashboardRole(data));
+      const canEndStationSession = dashboardRole(data) === "admin";
+      const canDeleteSwipes = dashboardRole(data) === "admin";
       const activeStationCount = Number.isFinite(Number(data.active_station_count))
         ? Number(data.active_station_count)
         : stations.filter(station => station.active_sessions > 0).length;
@@ -3497,6 +4250,7 @@
           </tr>
         `).join("")
         : emptyRow(canManuallyCheckout ? 4 : 3, "No one is currently counted inside");
+      bulkPeopleCheckoutButton.disabled = activePeople.length === 0;
 
       peopleBody.querySelectorAll("button[data-manual-checkout]").forEach(button => {
         button.addEventListener("click", () => {
@@ -3524,9 +4278,18 @@
             <td data-label="Person">${personCell(session)}</td>
             <td data-label="Station">${escapeHtml(session.station_name)}</td>
             <td data-label="Elapsed">${formatDuration(session.elapsed_seconds)}</td>
+            ${canEndStationSession ? `<td data-label="Action"><button class="danger" type="button" data-end-station-session="${escapeHtml(session.session_id)}">End session</button></td>` : ""}
           </tr>
         `).join("")
-        : emptyRow(3, "No active station sessions");
+        : emptyRow(canEndStationSession ? 4 : 3, "No active station sessions");
+      bulkSessionCheckoutButton.disabled = activeSessions.length === 0;
+
+      sessionsBody.querySelectorAll("button[data-end-station-session]").forEach(button => {
+        button.addEventListener("click", () => {
+          const session = activeSessions.find(item => String(item.session_id) === button.dataset.endStationSession);
+          if (session) endStationSession(session);
+        });
+      });
 
       warningsBody.innerHTML = warnings.length
         ? warnings.map(warning => `
@@ -3541,10 +4304,17 @@
       swipesBody.innerHTML = recentSwipes.length
         ? recentSwipes.map(swipe => `
           <tr class="${issueRowClass(swipe)}">
-            <td data-label="Time">${formatTime(swipe.timestamp)}</td><td data-label="Person">${personCell(swipe)}</td><td data-label="Place">${escapeHtml(swipe.station_name)}</td><td data-label="Action"><span class="badge ${actionClass(swipe.action, swipe.allowed)}">${escapeHtml(actionLabel(swipe.action))}</span></td><td data-label="Duration">${formatDuration(swipe.duration_seconds)}</td><td data-label="Inside">${escapeHtml(swipe.active_users)}</td><td data-label="Warning">${swipe.warning ? `<span class="badge ${swipe.warning === "cert_granted_via_swipe" ? "in" : "warn"}">${escapeHtml(warningLabel(swipe.warning))}</span>` : "--"}</td>
+            <td data-label="Time">${formatTime(swipe.timestamp)}</td><td data-label="Person">${personCell(swipe)}</td><td data-label="Place">${escapeHtml(swipe.station_name)}</td><td data-label="Action"><span class="badge ${actionClass(swipe.action, swipe.allowed)}">${escapeHtml(actionLabel(swipe.action))}</span></td><td data-label="Duration">${formatDuration(swipe.duration_seconds)}</td><td data-label="Inside">${escapeHtml(swipe.active_users)}</td><td data-label="Warning">${swipe.warning ? `<span class="badge ${swipe.warning === "cert_granted_via_swipe" ? "in" : "warn"}">${escapeHtml(warningLabel(swipe.warning))}</span>` : "--"}</td>${canDeleteSwipes ? `<td data-label="Action"><button class="danger" type="button" data-delete-swipe="${escapeHtml(swipe.id)}">Delete</button></td>` : ""}
           </tr>
         `).join("")
-        : emptyRow(7, "No swipes yet");
+        : emptyRow(canDeleteSwipes ? 8 : 7, "No swipes yet");
+
+      swipesBody.querySelectorAll("button[data-delete-swipe]").forEach(button => {
+        button.addEventListener("click", () => {
+          const swipe = recentSwipes.find(item => String(item.id) === button.dataset.deleteSwipe);
+          if (swipe) deleteSwipe(swipe);
+        });
+      });
     }
 
     function renderCanvasSyncTasks() {
@@ -3931,12 +4701,100 @@
         : emptyRow(6, "No stations configured");
     }
 
+    function resetKitForm() {
+      state.selectedKitId = "";
+      document.getElementById("kit-form").reset();
+      document.getElementById("kit-id").value = "";
+      document.getElementById("kit-active").checked = true;
+      kitStatus.textContent = "";
+    }
+
+    function renderKits() {
+      const canManage = state.role === "admin";
+      kitMasterPanel.classList.toggle("hidden", !canManage);
+
+      kitsBody.innerHTML = state.kits.length
+        ? state.kits.map(kit => {
+          const checkedOut = Boolean(kit.checkout_id);
+          const holder = kit.checked_out_to_name || kit.checked_out_to_email || "--";
+          const status = !kit.active
+            ? "Inactive"
+            : checkedOut
+              ? "Checked out"
+              : "Available";
+          const actions = [
+            checkedOut ? `<button class="danger" type="button" data-return-kit="${escapeHtml(kit.kit_id)}">Return</button>` : "",
+            canManage ? `<button type="button" data-edit-kit="${escapeHtml(kit.kit_id)}">Edit</button>` : "",
+          ].join(" ");
+          return `
+            <tr>
+              <td data-label="Kit"><strong>${escapeHtml(kit.kit_name)}</strong></td>
+              <td data-label="Kit card">${escapeHtml(kit.kit_card_id || "Not assigned")}</td>
+              <td data-label="Status"><span class="badge ${checkedOut ? "warn" : kit.active ? "in" : "empty"}">${escapeHtml(status)}</span></td>
+              <td data-label="Checked out to">${escapeHtml(holder)}</td>
+              <td data-label="Since">${checkedOut ? formatDateTime(kit.checked_out_at) : "--"}</td>
+              <td data-label="Action">${actions || "--"}</td>
+            </tr>
+          `;
+        }).join("")
+        : emptyRow(6, "No kits configured");
+
+      kitHistoryBody.innerHTML = state.kitCheckouts.length
+        ? state.kitCheckouts.map(checkout => `
+            <tr>
+              <td data-label="Kit">${escapeHtml(checkout.kit_name)}</td>
+              <td data-label="Person">${escapeHtml(checkout.name || checkout.email || "Unknown card")}</td>
+              <td data-label="Checked out">${formatDateTime(checkout.checked_out_at)}</td>
+              <td data-label="Returned">${checkout.returned_at ? formatDateTime(checkout.returned_at) : "Still out"}</td>
+            </tr>
+          `).join("")
+        : emptyRow(4, "No kit checkout activity yet");
+
+      kitsBody.querySelectorAll("button[data-return-kit]").forEach(button => {
+        button.addEventListener("click", () => returnKit(button.dataset.returnKit));
+      });
+      kitsBody.querySelectorAll("button[data-edit-kit]").forEach(button => {
+        button.addEventListener("click", () => {
+          const kit = state.kits.find(item => item.kit_id === button.dataset.editKit);
+          if (!kit) return;
+          state.selectedKitId = kit.kit_id;
+          document.getElementById("kit-id").value = kit.kit_id;
+          document.getElementById("kit-name").value = kit.kit_name;
+          document.getElementById("kit-card-id").value = kit.kit_card_id;
+          document.getElementById("kit-active").checked = Boolean(kit.active);
+          kitStatus.textContent = `Editing ${kit.kit_name}`;
+          document.getElementById("kit-name").focus();
+        });
+      });
+    }
+
+    async function returnKit(kitId) {
+      const kit = state.kits.find(item => item.kit_id === kitId);
+      const confirmed = await showConfirmDialog({
+        title: "Return Kit",
+        message: `Mark ${kit ? kit.kit_name : "this kit"} as returned?`,
+        confirmText: "Return kit",
+        danger: true,
+      });
+      if (!confirmed) return;
+      try {
+        const data = await postJson(`/api/kits/${encodeURIComponent(kitId)}/return`, {});
+        state.kits = data.kits || [];
+        state.kitCheckouts = data.kit_checkouts || [];
+        renderKits();
+        showToast("Kit returned");
+      } catch (error) {
+        showToast(error.message || "Could not return kit", "error");
+      }
+    }
+
     function renderAdmin() {
       updateAccessUi();
       renderPendingCards();
       renderCardRoster();
 
       renderCertifications();
+      renderKits();
       renderStationRules();
       renderCertifyPermissions();
       renderCanvasSyncTasks();
@@ -4142,7 +5000,11 @@
     }
 
     async function refreshDashboard() {
-      if (state.dashboardRequestInFlight) return;
+      if (state.dashboardRequestInFlight) {
+        // A checkout can finish while the live polling request is still reading old data.
+        state.dashboardRefreshQueued = true;
+        return;
+      }
       state.dashboardRequestInFlight = true;
 
       try {
@@ -4186,6 +5048,10 @@
         );
       } finally {
         state.dashboardRequestInFlight = false;
+        if (state.dashboardRefreshQueued) {
+          state.dashboardRefreshQueued = false;
+          void refreshDashboard();
+        }
       }
     }
 
@@ -4252,6 +5118,8 @@
         state.stations = data.stations || [];
         state.readers = data.readers || [];
         state.certifications = data.certifications || [];
+        state.kits = data.kits || [];
+        state.kitCheckouts = data.kit_checkouts || [];
         state.certifyPermissions = data.certify_permissions || [];
         state.canvasSyncTasks = data.canvas_sync_tasks || [];
         state.auditLog = data.audit_log || [];
@@ -4342,6 +5210,16 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) throw new Error(data.error || "Save failed");
+      return data;
+    }
+
+    async function deleteJson(url) {
+      const response = await fetch(url, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "Delete failed");
       return data;
     }
 
@@ -4612,6 +5490,14 @@
       clearWarnings();
     });
 
+    bulkPeopleCheckoutButton.addEventListener("click", () => {
+      openBulkCheckoutDialog((state.lastDashboardData || {}).active_people || []);
+    });
+
+    bulkSessionCheckoutButton.addEventListener("click", () => {
+      endAllStationSessions((state.lastDashboardData || {}).active_sessions || []);
+    });
+
     downloadAuditButton.addEventListener("click", () => {
       downloadCsv("/audit.csv");
     });
@@ -4684,6 +5570,32 @@
       } catch (error) {
         status.textContent = error.message;
       }
+    });
+
+    document.getElementById("kit-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      if (state.role !== "admin") return;
+      kitStatus.textContent = "Saving...";
+      try {
+        const data = await postJson("/api/kits", {
+          kit_id: document.getElementById("kit-id").value,
+          name: document.getElementById("kit-name").value,
+          card_id: document.getElementById("kit-card-id").value,
+          active: document.getElementById("kit-active").checked,
+          notes: "",
+        });
+        state.kits = data.kits || [];
+        state.kitCheckouts = data.kit_checkouts || [];
+        resetKitForm();
+        renderKits();
+        showToast("Kit saved");
+      } catch (error) {
+        kitStatus.textContent = error.message || "Could not save kit";
+      }
+    });
+
+    document.getElementById("clear-kit").addEventListener("click", () => {
+      resetKitForm();
     });
 
     document.getElementById("clear-card").addEventListener("click", () => {

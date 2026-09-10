@@ -16,10 +16,11 @@ from offline_queue import OfflineQueue
 
 
 # Edit these for your hotspot and Pi server.
-WIFI_SSID = "replace-with-hotspot-ssid"
-WIFI_PASSWORD = "replace-with-hotspot-password"
+WIFI_SSID = "MS"
+WIFI_PASSWORD = "Ms2019!!"
 SERVER_URL = "http://192.168.1.60:5000/swipe"
-STATION_API_KEY = "replace-with-station-api-key"
+STATION_API_KEY = "key"
+
 
 # Front entrance reader.
 DOOR_ID = "front-door"
@@ -29,6 +30,10 @@ STATION_KIND = "door"
 # Hardware pins. These match the newer wiring in test.py.
 LIMIT_SWITCH_PIN = 5
 NEOPIXEL_PIN = 13
+
+# Optional piezo buzzer. Wire + to GP14 and - to GND.
+# Set to None to disable the buzzer without changing the rest of the reader.
+BUZZER_PIN = 14
 
 RFID_SCK = 18
 RFID_MISO = 16
@@ -52,6 +57,9 @@ next_queue_retry = 0
 
 limit_switch = Pin(LIMIT_SWITCH_PIN, Pin.IN, Pin.PULL_UP)
 pixel = neopixel.NeoPixel(Pin(NEOPIXEL_PIN), 1)
+buzzer = machine.PWM(Pin(BUZZER_PIN)) if BUZZER_PIN is not None else None
+if buzzer:
+    buzzer.duty_u16(0)
 
 COLORS = {
     "off": (0, 0, 0),
@@ -67,6 +75,34 @@ COLORS = {
 def set_led(color):
     pixel[0] = COLORS[color]
     pixel.write()
+
+
+def beep(frequency, duration_ms):
+    if buzzer is None:
+        return
+    buzzer.freq(frequency)
+    buzzer.duty_u16(32768)
+    time.sleep_ms(duration_ms)
+    buzzer.duty_u16(0)
+
+
+def play_buzzer_signal(signal, action=""):
+    if signal == "unknown_card":
+        beep(660, 90)
+        time.sleep_ms(70)
+        beep(440, 150)
+    elif signal == "access_denied":
+        beep(330, 250)
+    elif signal == "server_error":
+        beep(220, 180)
+    elif action == "enter":
+        beep(880, 80)
+        time.sleep_ms(50)
+        beep(1175, 120)
+    elif action == "exit":
+        beep(520, 120)
+    elif signal == "access_granted":
+        beep(880, 120)
 
 
 def blink(color, count=3, delay=0.15):
@@ -198,7 +234,13 @@ def show_result(result):
         return
 
     signal = result.get("led_signal", "")
+    action = result.get("action", "")
+    play_buzzer_signal(signal, action)
     if signal == "server_error" or result.get("queued"):
+        blink("purple", 3)
+        return
+
+    if signal == "unknown_card":
         blink("purple", 3)
         return
 

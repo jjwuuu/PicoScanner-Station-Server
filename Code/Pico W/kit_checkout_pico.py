@@ -16,18 +16,18 @@ from offline_queue import OfflineQueue
 
 
 # Edit these for your hotspot and Pi server.
-WIFI_SSID = "replace-with-hotspot-ssid"
-WIFI_PASSWORD = "replace-with-hotspot-password"
+WIFI_SSID = "MS"
+WIFI_PASSWORD = "Ms2019!!"
 SERVER_URL = "http://192.168.1.60:5000/swipe"
-STATION_API_KEY = "replace-with-station-api-key"
+STATION_API_KEY = "key"
 
 print("Station key loaded:", STATION_API_KEY)
 print("Server URL:", SERVER_URL)
 
-# 3D printing station reader.
-STATION_ID = "3d-printing"
-STATION_NAME = "3D Printing"
-STATION_KIND = "station"
+# Kit checkout reader.
+STATION_ID = "kit-checkout"
+STATION_NAME = "Kit Checkout"
+STATION_KIND = "kit"
 
 # Hardware pins. These match the newer wiring in test.py.
 LIMIT_SWITCH_PIN = 5
@@ -356,3 +356,4 @@ while True:
         wait_for_release()
 
     time.sleep(0.05)
+

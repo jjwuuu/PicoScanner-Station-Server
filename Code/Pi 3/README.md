@@ -59,6 +59,15 @@ known, active, and allowed for that station. If the station requires
 certification, the user must be certified first. If the station does not
 require certification, the swipe is logged as usage only.
 
+### Kit Checkout
+
+The Kits tab holds the master list of kits. Admins assign each kit's RFID card;
+Staff and Admins can view availability and manually return a kit when needed.
+At the dedicated kit reader, swipe the kit card first and then a known, active
+user card within 15 seconds. This checks the kit out to that user. Repeat the
+same kit-card then user-card sequence to return it. Every checkout and return
+is retained in kit history and the audit log.
+
 ### Certification Swipe
 
 Staff or Admin cards can use the station double-swipe certification flow when
@@ -83,9 +92,17 @@ The Pico LED uses these common states:
 
 - Green: swipe accepted or certification succeeded
 - Red: swipe denied
+- Purple: unknown card or reader/server problem
 - Yellow: waiting or ready state
 - Blue slow blink: certification mode armed
 - Blue fast blink: waiting for the second confirm swipe
+
+## Piezo Buzzer
+
+All reader files support an optional piezo buzzer on `GP14`. Wire the piezo
+positive lead to `GP14` and the negative lead to `GND`. Set `BUZZER_PIN = None`
+in a reader file to disable it. The reader uses a distinct two-tone chirp for an
+unknown card, a low tone for denied access, and a high tone for accepted access.
 
 ## Project Files
 
