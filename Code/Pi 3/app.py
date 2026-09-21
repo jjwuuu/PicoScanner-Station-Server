@@ -59,6 +59,16 @@ def configured_hour(name, default, allow_24=False):
 
 OPENING_HOUR = configured_hour("STATION_OPENING_HOUR", 12)
 CLOSING_HOUR = configured_hour("STATION_CLOSING_HOUR", 17, allow_24=True)
+DEFAULT_OPEN_DAYS = tuple(range(7))
+WEEKDAY_LABELS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
 PERSON_REF_SECRET = (
     os.environ.get("STATION_PERSON_REF_SECRET", "").strip()
     or STATION_API_KEY
@@ -85,6 +95,84 @@ MAX_ID_LENGTH = 128
 MAX_NAME_LENGTH = 200
 MAX_EMAIL_LENGTH = 254
 MAX_NOTES_LENGTH = 4000
+ACADEMIC_PERIODS = (
+    {
+        "academic_year": "2026-2027",
+        "term": "Summer 2026",
+        "session": "10-week session",
+        "start": "2026-06-03",
+        "classes_end": "2026-08-07",
+        "finals_start": "2026-08-10",
+        "finals_end": "2026-08-14",
+        "grades_due": "2026-08-17",
+    },
+    {
+        "academic_year": "2026-2027",
+        "term": "Summer 2026",
+        "session": "1st 5-week session",
+        "start": "2026-06-03",
+        "classes_end": "2026-07-03",
+        "finals_start": "2026-07-06",
+        "finals_end": "2026-07-07",
+        "grades_due": "2026-07-13",
+    },
+    {
+        "academic_year": "2026-2027",
+        "term": "Summer 2026",
+        "session": "2nd 5-week session",
+        "start": "2026-07-09",
+        "classes_end": "2026-08-07",
+        "finals_start": "2026-08-10",
+        "finals_end": "2026-08-11",
+        "grades_due": "2026-08-17",
+    },
+    {
+        "academic_year": "2026-2027",
+        "term": "Fall 2026",
+        "session": "15-week semester",
+        "start": "2026-08-20",
+        "classes_end": "2026-12-06",
+        "finals_start": "2026-12-07",
+        "finals_end": "2026-12-13",
+        "grades_due": "2026-12-18",
+    },
+    {
+        "academic_year": "2026-2027",
+        "term": "Winter 2027",
+        "session": "4-week intersession",
+        "start": "2026-12-28",
+        "classes_end": "2027-01-19",
+        "finals_start": "2027-01-20",
+        "finals_end": "2027-01-20",
+        "grades_due": "2027-01-21",
+    },
+    {
+        "academic_year": "2026-2027",
+        "term": "Winter 2027",
+        "session": "2-week intersession",
+        "start": "2027-01-04",
+        "classes_end": "2027-01-19",
+        "finals_start": "2027-01-20",
+        "finals_end": "2027-01-20",
+        "grades_due": "2027-01-21",
+    },
+    {
+        "academic_year": "2026-2027",
+        "term": "Spring 2027",
+        "session": "15-week semester",
+        "start": "2027-01-23",
+        "classes_end": "2027-05-14",
+        "finals_start": "2027-05-15",
+        "finals_end": "2027-05-21",
+        "grades_due": "2027-05-28",
+    },
+)
+ACADEMIC_TERM_ORDER = {}
+for academic_period in ACADEMIC_PERIODS:
+    ACADEMIC_TERM_ORDER.setdefault(
+        academic_period["term"],
+        len(ACADEMIC_TERM_ORDER),
+    )
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CSV_BYTES
@@ -129,14 +217,159 @@ def local_space_time(value=None):
     return value.astimezone(SPACE_TIMEZONE)
 
 
-def space_is_open(value=None):
+def default_space_schedule():
+    return {
+        "open_time": f"{OPENING_HOUR:02d}:00",
+        "close_time": f"{CLOSING_HOUR % 24:02d}:00",
+        "open_days": list(DEFAULT_OPEN_DAYS),
+    }
+
+
+def parse_schedule_time(value, field):
+    text = str(value or "").strip()
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
+    if not match:
+        raise ValueError(f"{field} must use HH:MM time")
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23 or minute > 59:
+        raise ValueError(f"{field} must be a valid time")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def schedule_minutes(value):
+    hour, minute = [int(part) for part in value.split(":", 1)]
+    return (hour * 60) + minute
+
+
+def load_space_schedule(conn):
+    schedule = default_space_schedule()
+    try:
+        rows = conn.execute(
+            """
+            SELECT key, value
+            FROM station_settings
+            WHERE key IN ('open_time', 'close_time', 'open_days')
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return schedule
+
+    values = {row["key"]: row["value"] for row in rows}
+    for key in ("open_time", "close_time"):
+        if values.get(key):
+            try:
+                schedule[key] = parse_schedule_time(values[key], key)
+            except ValueError:
+                pass
+
+    if values.get("open_days"):
+        try:
+            days = json.loads(values["open_days"])
+            days = sorted({int(day) for day in days})
+            if all(0 <= day <= 6 for day in days):
+                schedule["open_days"] = days
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return schedule
+
+
+def normalize_space_schedule(data):
+    open_time = parse_schedule_time(data.get("open_time"), "open_time")
+    close_time = parse_schedule_time(data.get("close_time"), "close_time")
+    raw_days = data.get("open_days", [])
+    if not isinstance(raw_days, list):
+        raise ValueError("open_days must be a list")
+    try:
+        open_days = sorted({int(day) for day in raw_days})
+    except (TypeError, ValueError):
+        raise ValueError("open_days must contain weekday numbers") from None
+    if not open_days:
+        raise ValueError("Choose at least one open day")
+    if any(day < 0 or day > 6 for day in open_days):
+        raise ValueError("open_days must be between 0 and 6")
+    return {
+        "open_time": open_time,
+        "close_time": close_time,
+        "open_days": open_days,
+    }
+
+
+def save_space_schedule(conn, schedule):
+    conn.executemany(
+        """
+        INSERT INTO station_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        """,
+        (
+            ("open_time", schedule["open_time"], now_iso()),
+            ("close_time", schedule["close_time"], now_iso()),
+            ("open_days", json.dumps(schedule["open_days"]), now_iso()),
+        ),
+    )
+
+
+def display_time(value):
+    minutes = schedule_minutes(value)
+    hour = minutes // 60
+    minute = minutes % 60
+    suffix = "AM" if hour < 12 else "PM"
+    display = hour % 12 or 12
+    return f"{display}:{minute:02d} {suffix}"
+
+
+def open_day_label(days):
+    if days == list(range(7)):
+        return "Every day"
+    if days == list(range(5)):
+        return "Mon-Fri"
+    if days == [5, 6]:
+        return "Sat-Sun"
+    return ", ".join(WEEKDAY_LABELS[day][:3] for day in days)
+
+
+def opening_hours_label(conn=None):
+    close_conn = False
+    if conn is None:
+        conn = db_connect()
+        close_conn = True
+    try:
+        schedule = load_space_schedule(conn)
+        return (
+            f"{open_day_label(schedule['open_days'])} "
+            f"{display_time(schedule['open_time'])}-{display_time(schedule['close_time'])}"
+        )
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def space_is_open(value=None, conn=None):
     local_time = local_space_time(value)
-    decimal_hour = local_time.hour + (local_time.minute / 60)
-    if OPENING_HOUR == CLOSING_HOUR:
+    close_conn = False
+    if conn is None:
+        conn = db_connect()
+        close_conn = True
+    try:
+        schedule = load_space_schedule(conn)
+    finally:
+        if close_conn:
+            conn.close()
+
+    if local_time.weekday() not in schedule["open_days"]:
+        return False
+
+    current_minutes = (local_time.hour * 60) + local_time.minute
+    opening_minutes = schedule_minutes(schedule["open_time"])
+    closing_minutes = schedule_minutes(schedule["close_time"])
+    if opening_minutes == closing_minutes:
         return True
-    if OPENING_HOUR < CLOSING_HOUR:
-        return OPENING_HOUR <= decimal_hour < CLOSING_HOUR
-    return decimal_hour >= OPENING_HOUR or decimal_hour < CLOSING_HOUR
+    if opening_minutes < closing_minutes:
+        return opening_minutes <= current_minutes < closing_minutes
+    return current_minutes >= opening_minutes or current_minutes < closing_minutes
 
 
 def display_hour(hour):
@@ -145,10 +378,6 @@ def display_hour(hour):
     suffix = "AM" if hour < 12 else "PM"
     display = hour % 12 or 12
     return f"{display}:00 {suffix}"
-
-
-def opening_hours_label():
-    return f"{display_hour(OPENING_HOUR)}-{display_hour(CLOSING_HOUR)}"
 
 
 def after_hours_access_role(conn, card_id):
@@ -666,6 +895,12 @@ def init_db():
                 target_type TEXT NOT NULL DEFAULT '',
                 target_id TEXT NOT NULL DEFAULT '',
                 details TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS station_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS kits (
@@ -1894,7 +2129,7 @@ def handle_door_swipe(conn, card_id, door_id, door_name, event_id=""):
                 event_id=event_id,
             )
 
-        if not space_is_open() and not after_hours_access_role(conn, card_id):
+        if not space_is_open(conn=conn) and not after_hours_access_role(conn, card_id):
             return log_event(
                 conn,
                 card_id,
@@ -1905,7 +2140,7 @@ def handle_door_swipe(conn, card_id, door_id, door_name, event_id=""):
                 allowed=False,
                 warning="outside_open_hours",
                 details=(
-                    f"Regular user entry is limited to {opening_hours_label()} "
+                    f"Regular user entry is limited to {opening_hours_label(conn)} "
                     f"({SPACE_TIMEZONE_NAME})"
                 ),
                 event_id=event_id,
@@ -2363,6 +2598,46 @@ def kit_checkout_row(conn, kit_id):
     ).fetchone()
 
 
+def recalculated_swipe_duration(conn, swipe_event_id, card_id, station_id, station_kind, action, timestamp):
+    if action in ("station_out", "station_auto_out"):
+        row = conn.execute(
+            """
+            SELECT timestamp
+            FROM swipe_events
+            WHERE id != ?
+              AND card_id = ?
+              AND station_id = ?
+              AND station_kind = 'station'
+              AND action = 'station_in'
+              AND timestamp <= ?
+            ORDER BY timestamp DESC, id DESC
+            LIMIT 1
+            """,
+            (swipe_event_id, card_id, station_id, timestamp),
+        ).fetchone()
+    elif action in ("exit", "manual_exit"):
+        row = conn.execute(
+            """
+            SELECT timestamp
+            FROM swipe_events
+            WHERE id != ?
+              AND card_id = ?
+              AND station_kind = 'door'
+              AND action = 'enter'
+              AND timestamp <= ?
+            ORDER BY timestamp DESC, id DESC
+            LIMIT 1
+            """,
+            (swipe_event_id, card_id, timestamp),
+        ).fetchone()
+    else:
+        row = None
+
+    if not row:
+        return None
+    return elapsed_seconds(row["timestamp"], parse_iso(timestamp))
+
+
 def handle_kit_swipe(conn, card_id, reader, event_id=""):
     reader_id = reader["station_id"]
     reader_name = reader["station_name"]
@@ -2800,7 +3075,7 @@ def access_check():
                     login,
                     {
                         "login": login,
-                        "source_ip": client_ip_address(),
+                        "ip": client_ip_address(),
                         "retry_after_seconds": retry_after,
                     },
                 )
@@ -2856,7 +3131,7 @@ def access_check():
                     login,
                     {
                         "login": login,
-                        "source_ip": client_ip_address(),
+                        "ip": client_ip_address(),
                     },
                 )
             conn.commit()
@@ -2901,7 +3176,7 @@ def access_check():
             "login",
             "account",
             account["card_id"],
-            {"login": login, "source_ip": client_ip_address()},
+            {"login": login, "ip": client_ip_address()},
         )
         conn.commit()
         conn.close()
@@ -3039,6 +3314,7 @@ def admin_data():
             else []
         )
         audit_log = audit_log_rows(conn) if role == "admin" else []
+        schedule = load_space_schedule(conn)
         kits = kit_rows(conn)
         kit_checkouts = kit_checkout_history_rows(conn)
         can_certify_station_ids = (
@@ -3059,6 +3335,7 @@ def admin_data():
             "certify_permissions": certify_permissions,
             "canvas_sync_tasks": canvas_sync_tasks,
             "audit_log": audit_log,
+            "schedule": schedule,
             "kits": kits,
             "kit_checkouts": kit_checkouts,
             "can_certify_station_ids": can_certify_station_ids,
@@ -4217,6 +4494,9 @@ def clear_warnings():
 
 def checkout_active_station_session(conn, session, ended_at, account):
     session_id = session["id"]
+    started_at = parse_iso(session["started_at"])
+    if ended_at < started_at:
+        raise ValueError("Checkout time cannot be before station start time")
     conn.execute("DELETE FROM active_sessions WHERE id = ?", (session_id,))
     event = log_event(
         conn,
@@ -4247,11 +4527,16 @@ def checkout_active_station_session(conn, session, ended_at, account):
 
 @app.post("/api/active-sessions/<int:session_id>/checkout")
 def manual_checkout_station_session(session_id):
-    role, error = require_access("admin")
+    role, error = require_access("staff")
     if error:
         return error
 
     account = account_for_token(token_from_request())
+    try:
+        ended_at = parse_manual_checkout_time(request_json())
+    except (TypeError, ValueError, OverflowError) as error:
+        return jsonify({"ok": False, "error": f"Invalid checkout time: {error}"}), 400
+
     with db_lock:
         conn = db_connect()
         session = conn.execute(
@@ -4266,12 +4551,16 @@ def manual_checkout_station_session(session_id):
             conn.close()
             return jsonify({"ok": False, "error": "Active station session not found"}), 404
 
-        event = checkout_active_station_session(
-            conn,
-            session,
-            datetime.now(timezone.utc).replace(microsecond=0),
-            account,
-        )
+        try:
+            event = checkout_active_station_session(
+                conn,
+                session,
+                ended_at,
+                account,
+            )
+        except ValueError as error:
+            conn.close()
+            return jsonify({"ok": False, "error": str(error)}), 400
         conn.commit()
         conn.close()
 
@@ -4280,12 +4569,13 @@ def manual_checkout_station_session(session_id):
 
 @app.post("/api/active-sessions/checkout-bulk")
 def bulk_checkout_station_sessions():
-    role, error = require_access("admin")
+    role, error = require_access("staff")
     if error:
         return error
 
     account = account_for_token(token_from_request())
-    raw_session_ids = request_json().get("session_ids")
+    data = request_json()
+    raw_session_ids = data.get("session_ids")
     if not isinstance(raw_session_ids, list) or not raw_session_ids:
         return jsonify({"ok": False, "error": "Select one or more station sessions to end"}), 400
     if len(raw_session_ids) > 500:
@@ -4296,6 +4586,10 @@ def bulk_checkout_station_sessions():
         return jsonify({"ok": False, "error": "Station session IDs must be numbers"}), 400
     if any(session_id < 1 for session_id in session_ids):
         return jsonify({"ok": False, "error": "Station session IDs must be positive"}), 400
+    try:
+        ended_at = parse_manual_checkout_time(data)
+    except (TypeError, ValueError, OverflowError) as error:
+        return jsonify({"ok": False, "error": f"Invalid bulk checkout: {error}"}), 400
 
     placeholders = ", ".join("?" for _ in session_ids)
     with db_lock:
@@ -4313,9 +4607,12 @@ def bulk_checkout_station_sessions():
             conn.close()
             return jsonify({"ok": False, "error": "None of the selected station sessions are active"}), 404
 
-        ended_at = datetime.now(timezone.utc).replace(microsecond=0)
-        for session in sessions:
-            checkout_active_station_session(conn, session, ended_at, account)
+        try:
+            for session in sessions:
+                checkout_active_station_session(conn, session, ended_at, account)
+        except ValueError as error:
+            conn.close()
+            return jsonify({"ok": False, "error": str(error)}), 400
         add_audit_log(
             conn,
             account,
@@ -4367,6 +4664,169 @@ def delete_swipe_event(swipe_event_id):
                 "action": event["action"],
                 "warning": event["warning"],
                 "event_id": event["event_id"],
+            },
+        )
+        conn.commit()
+        conn.close()
+
+    return jsonify({"ok": True})
+
+
+@app.patch("/api/swipes/<int:swipe_event_id>")
+def edit_swipe_event(swipe_event_id):
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    data = request_json()
+    try:
+        card_id = validate_text(
+            data.get("card_id"),
+            "card_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_id = validate_text(
+            data.get("station_id"),
+            "station_id",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        station_name = validate_text(
+            data.get("station_name"),
+            "station_name",
+            MAX_NAME_LENGTH,
+            required=True,
+        )
+        station_kind = validate_text(
+            data.get("station_kind"),
+            "station_kind",
+            MAX_ID_LENGTH,
+            required=True,
+        ).lower()
+        timestamp = parse_iso(data.get("timestamp")).replace(microsecond=0).isoformat()
+        action = validate_text(
+            data.get("action"),
+            "action",
+            MAX_ID_LENGTH,
+            required=True,
+        )
+        warning = validate_text(data.get("warning"), "warning", MAX_ID_LENGTH)
+        details = validate_text(data.get("details"), "details", MAX_NOTES_LENGTH)
+        event_id = validate_text(data.get("event_id"), "event_id", MAX_ID_LENGTH)
+        recalculate_duration = parse_bool(data.get("recalculate_duration", False))
+        duration_raw = data.get("duration_seconds")
+        duration_seconds = None if duration_raw in (None, "") else int(duration_raw)
+        active_users = int(data.get("active_users", 0))
+    except (TypeError, ValueError, OverflowError) as error:
+        return jsonify({"ok": False, "error": f"Invalid swipe edit: {error}"}), 400
+
+    if station_kind not in ("door", "station", "kit"):
+        return jsonify({"ok": False, "error": "station_kind must be door, station, or kit"}), 400
+    if duration_seconds is not None and duration_seconds < 0:
+        return jsonify({"ok": False, "error": "duration_seconds must be zero or greater"}), 400
+    if active_users < 0:
+        return jsonify({"ok": False, "error": "active_users must be zero or greater"}), 400
+
+    allowed = 1 if parse_bool(data.get("allowed", True)) else 0
+    account = account_for_token(token_from_request())
+    with db_lock:
+        conn = db_connect()
+        existing = conn.execute(
+            """
+            SELECT id, card_id, station_id, station_name, station_kind, timestamp,
+                   action, allowed, duration_seconds, active_users, warning,
+                   details, event_id
+            FROM swipe_events
+            WHERE id = ?
+            """,
+            (swipe_event_id,),
+        ).fetchone()
+        if not existing:
+            conn.close()
+            return jsonify({"ok": False, "error": "Swipe record not found"}), 404
+
+        duplicate_event = None
+        if event_id:
+            duplicate_event = conn.execute(
+                """
+                SELECT id
+                FROM swipe_events
+                WHERE event_id = ? AND id != ?
+                """,
+                (event_id, swipe_event_id),
+            ).fetchone()
+        if duplicate_event:
+            conn.close()
+            return jsonify({"ok": False, "error": "event_id is already used by another swipe"}), 400
+
+        if recalculate_duration:
+            duration_seconds = recalculated_swipe_duration(
+                conn,
+                swipe_event_id,
+                card_id,
+                station_id,
+                station_kind,
+                action,
+                timestamp,
+            )
+
+        conn.execute(
+            """
+            UPDATE swipe_events
+            SET card_id = ?,
+                station_id = ?,
+                station_name = ?,
+                station_kind = ?,
+                timestamp = ?,
+                action = ?,
+                allowed = ?,
+                duration_seconds = ?,
+                active_users = ?,
+                warning = ?,
+                details = ?,
+                event_id = ?
+            WHERE id = ?
+            """,
+            (
+                card_id,
+                station_id,
+                station_name,
+                station_kind,
+                timestamp,
+                action,
+                allowed,
+                duration_seconds,
+                active_users,
+                warning,
+                details,
+                event_id,
+                swipe_event_id,
+            ),
+        )
+        add_audit_log(
+            conn,
+            account,
+            "swipe_event_edited",
+            "swipe_event",
+            str(swipe_event_id),
+            {
+                "before": dict(existing),
+                "after": {
+                    "card_id": card_id,
+                    "station_id": station_id,
+                    "station_name": station_name,
+                    "station_kind": station_kind,
+                    "timestamp": timestamp,
+                    "action": action,
+                    "allowed": bool(allowed),
+                    "duration_seconds": duration_seconds,
+                    "recalculate_duration": recalculate_duration,
+                    "active_users": active_users,
+                    "warning": warning,
+                    "details": details,
+                    "event_id": event_id,
+                },
             },
         )
         conn.commit()
@@ -5259,7 +5719,8 @@ def recent_swipe_rows(conn, limit, query="", station_id="", warning_only=False):
             swipe_events.duration_seconds,
             swipe_events.active_users,
             swipe_events.warning,
-            swipe_events.details
+            swipe_events.details,
+            swipe_events.event_id
         FROM swipe_events
         LEFT JOIN cards ON cards.card_id = swipe_events.card_id
         {where}
@@ -5478,13 +5939,15 @@ def analytics_snapshot(conn, days=30, current_time=None):
     total_sessions = sum(item["sessions"] for item in usage_rows)
     total_usage_seconds = sum(item["total_seconds"] for item in usage_rows)
     top_station = next((item for item in usage_rows if item["sessions"]), None)
+    schedule = load_space_schedule(conn)
     return {
         "generated_at": current_time.replace(microsecond=0).isoformat(),
         "days": days,
         "period_label": "All time" if not days else f"Last {days} days",
         "timezone": SPACE_TIMEZONE_NAME,
-        "opening_hours": opening_hours_label(),
-        "space_open_now": space_is_open(current_time),
+        "opening_hours": opening_hours_label(conn),
+        "space_open_now": space_is_open(current_time, conn),
+        "schedule": schedule,
         "summary": {
             "completed_sessions": total_sessions,
             "total_usage_seconds": total_usage_seconds,
@@ -5526,6 +5989,280 @@ def workbook_safe_cell(value):
     return value
 
 
+def academic_period_date(value):
+    return datetime.fromisoformat(value).date()
+
+
+def academic_period_matches(value):
+    if not value:
+        return []
+    try:
+        event_date = local_space_time(parse_iso(value)).date()
+    except (TypeError, ValueError, OverflowError):
+        return []
+
+    matches = []
+    for period in ACADEMIC_PERIODS:
+        start = academic_period_date(period["start"])
+        grades_due = academic_period_date(period["grades_due"])
+        if start <= event_date <= grades_due:
+            matches.append(period)
+    return matches
+
+
+def academic_period_status(value, matches):
+    if not value or not matches:
+        return "Outside calendar"
+    try:
+        event_date = local_space_time(parse_iso(value)).date()
+    except (TypeError, ValueError, OverflowError):
+        return "Unknown"
+
+    statuses = []
+    for period in matches:
+        classes_end = academic_period_date(period["classes_end"])
+        finals_start = academic_period_date(period["finals_start"])
+        finals_end = academic_period_date(period["finals_end"])
+        grades_due = academic_period_date(period["grades_due"])
+        if event_date <= classes_end:
+            statuses.append("Instruction")
+        elif finals_start <= event_date <= finals_end:
+            statuses.append("Finals")
+        elif event_date <= grades_due:
+            statuses.append("Grades due")
+        else:
+            statuses.append("Between sessions")
+    return " / ".join(dict.fromkeys(statuses))
+
+
+def academic_period_fields(value):
+    matches = academic_period_matches(value)
+    terms = list(dict.fromkeys(period["term"] for period in matches))
+    sessions = list(dict.fromkeys(period["session"] for period in matches))
+    academic_years = list(dict.fromkeys(period["academic_year"] for period in matches))
+
+    try:
+        local_dt = local_space_time(parse_iso(value)) if value else None
+    except (TypeError, ValueError, OverflowError):
+        local_dt = None
+
+    if local_dt:
+        event_date = local_dt.date()
+        week_start = event_date - timedelta(days=event_date.weekday())
+        month = event_date.strftime("%Y-%m")
+    else:
+        event_date = ""
+        week_start = ""
+        month = ""
+
+    return {
+        "academic_year": ", ".join(academic_years),
+        "term": ", ".join(terms) if terms else "Outside 2026-27 calendar",
+        "academic_session": "; ".join(sessions),
+        "period_status": academic_period_status(value, matches),
+        "event_date": event_date.isoformat() if event_date else "",
+        "week_start": week_start.isoformat() if week_start else "",
+        "month": month,
+    }
+
+
+def enrich_timestamped_rows(rows, timestamp_key):
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        item.update(academic_period_fields(item.get(timestamp_key)))
+        enriched.append(item)
+    return enriched
+
+
+def display_audit_details(details):
+    if not details:
+        return ""
+    try:
+        data = json.loads(details) if isinstance(details, str) else dict(details)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return details
+    if "source_ip" in data:
+        data["ip"] = data.pop("source_ip")
+    return json.dumps(data, sort_keys=True)
+
+
+def academic_term_sort_value(term):
+    first_term = (term or "").split(",")[0].strip()
+    return ACADEMIC_TERM_ORDER.get(first_term, len(ACADEMIC_TERM_ORDER) + 1)
+
+
+def sorted_timestamped_rows(rows, timestamp_key):
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.get("academic_year", ""),
+            academic_term_sort_value(row.get("term")),
+            row.get("event_date", ""),
+            row.get(timestamp_key, ""),
+        ),
+    )
+
+
+def seconds_to_hours(seconds):
+    return round((int(seconds or 0) / 3600), 2)
+
+
+def workbook_term_summaries(swipe_rows, certification_rows):
+    summaries = {}
+    station_summaries = {}
+    certification_summaries = {}
+
+    for row in swipe_rows:
+        term = row.get("term") or "Outside 2026-27 calendar"
+        summary = summaries.setdefault(
+            term,
+            {
+                "term": term,
+                "swipes": 0,
+                "visitor_entries": 0,
+                "station_sessions": 0,
+                "station_hours": 0,
+                "unique_station_users": set(),
+                "warnings": 0,
+                "certifications_granted": 0,
+                "inactive_certifications": 0,
+                "certified_people": set(),
+            },
+        )
+        summary["swipes"] += 1
+        if row.get("warning"):
+            summary["warnings"] += 1
+        if row.get("station_kind") == "door" and row.get("action") == "enter":
+            summary["visitor_entries"] += 1
+        if row.get("station_kind") == "station" and row.get("action") in (
+            "station_out",
+            "station_auto_out",
+            "station_manual_out",
+        ):
+            summary["station_sessions"] += 1
+            summary["station_hours"] += int(row.get("duration_seconds") or 0)
+            if row.get("card_id"):
+                summary["unique_station_users"].add(row["card_id"])
+
+            station_key = (term, row.get("station_id") or "", row.get("station_name") or "")
+            station_summary = station_summaries.setdefault(
+                station_key,
+                {
+                    "term": term,
+                    "station_id": row.get("station_id") or "",
+                    "station_name": row.get("station_name") or "",
+                    "sessions": 0,
+                    "hours": 0,
+                    "unique_users": set(),
+                },
+            )
+            station_summary["sessions"] += 1
+            station_summary["hours"] += int(row.get("duration_seconds") or 0)
+            if row.get("card_id"):
+                station_summary["unique_users"].add(row["card_id"])
+
+    for row in certification_rows:
+        term = row.get("term") or "Outside 2026-27 calendar"
+        summary = summaries.setdefault(
+            term,
+            {
+                "term": term,
+                "swipes": 0,
+                "visitor_entries": 0,
+                "station_sessions": 0,
+                "station_hours": 0,
+                "unique_station_users": set(),
+                "warnings": 0,
+                "certifications_granted": 0,
+                "inactive_certifications": 0,
+                "certified_people": set(),
+            },
+        )
+        station_key = (term, row.get("station_id") or "", row.get("station_name") or "")
+        certification_summary = certification_summaries.setdefault(
+            station_key,
+            {
+                "term": term,
+                "station_id": row.get("station_id") or "",
+                "station_name": row.get("station_name") or "",
+                "certifications_granted": 0,
+                "inactive_certifications": 0,
+                "certified_people": set(),
+            },
+        )
+        if row.get("active"):
+            summary["certifications_granted"] += 1
+            certification_summary["certifications_granted"] += 1
+        else:
+            summary["inactive_certifications"] += 1
+            certification_summary["inactive_certifications"] += 1
+        if row.get("bronco_id"):
+            summary["certified_people"].add(row["bronco_id"])
+            certification_summary["certified_people"].add(row["bronco_id"])
+
+    term_rows = []
+    for summary in summaries.values():
+        term_rows.append(
+            {
+                "term": summary["term"],
+                "swipes": summary["swipes"],
+                "visitor_entries": summary["visitor_entries"],
+                "station_sessions": summary["station_sessions"],
+                "station_hours": seconds_to_hours(summary["station_hours"]),
+                "unique_station_users": len(summary["unique_station_users"]),
+                "certifications_granted": summary["certifications_granted"],
+                "certified_people": len(summary["certified_people"]),
+                "inactive_certifications": summary["inactive_certifications"],
+                "warnings": summary["warnings"],
+            }
+        )
+
+    station_rows = []
+    for summary in station_summaries.values():
+        station_rows.append(
+            {
+                "term": summary["term"],
+                "station_id": summary["station_id"],
+                "station_name": summary["station_name"],
+                "sessions": summary["sessions"],
+                "hours": seconds_to_hours(summary["hours"]),
+                "unique_users": len(summary["unique_users"]),
+            }
+        )
+
+    certification_rows_summary = []
+    for summary in certification_summaries.values():
+        certification_rows_summary.append(
+            {
+                "term": summary["term"],
+                "station_id": summary["station_id"],
+                "station_name": summary["station_name"],
+                "certifications_granted": summary["certifications_granted"],
+                "inactive_certifications": summary["inactive_certifications"],
+                "certified_people": len(summary["certified_people"]),
+            }
+        )
+
+    return (
+        sorted(term_rows, key=lambda row: academic_term_sort_value(row["term"])),
+        sorted(
+            station_rows,
+            key=lambda row: (
+                academic_term_sort_value(row["term"]),
+                row["station_name"],
+            ),
+        ),
+        sorted(
+            certification_rows_summary,
+            key=lambda row: (
+                academic_term_sort_value(row["term"]),
+                row["station_name"],
+            ),
+        ),
+    )
+
+
 def add_workbook_sheet(workbook, title, headers, rows):
     worksheet = workbook.create_sheet(title=title)
     worksheet.append(headers)
@@ -5554,6 +6291,7 @@ def add_workbook_sheet(workbook, title, headers, rows):
 def build_master_workbook(conn):
     workbook = Workbook()
     workbook.remove(workbook.active)
+    generated_at = local_space_time().isoformat(timespec="seconds")
     people = conn.execute(
         """
         SELECT people.bronco_id, people.name, people.email, people.designation,
@@ -5564,36 +6302,29 @@ def build_master_workbook(conn):
         ORDER BY people.name, people.bronco_id
         """
     ).fetchall()
-    add_workbook_sheet(
-        workbook, "People",
-        ["bronco_id", "name", "email", "designation", "active", "assigned_card_id", "notes", "updated_at"],
-        people,
-    )
 
-    certifications = conn.execute(
-        """
-        SELECT bronco_certifications.bronco_id, people.name, people.email,
-               cards.card_id, bronco_certifications.station_id,
-               stations.name AS station_name, bronco_certifications.active,
-               bronco_certifications.updated_at, certifications.granted_via,
-               certifications.granted_by, certifications.granted_at,
-               bronco_certifications.notes
-        FROM bronco_certifications
-        JOIN people ON people.bronco_id = bronco_certifications.bronco_id
-        JOIN stations ON stations.id = bronco_certifications.station_id
-        LEFT JOIN cards ON lower(cards.bronco_id) = lower(people.bronco_id)
-        LEFT JOIN certifications
-          ON certifications.card_id = cards.card_id
-         AND certifications.station_id = bronco_certifications.station_id
-        ORDER BY people.name, stations.name
-        """
-    ).fetchall()
-    add_workbook_sheet(
-        workbook, "Certifications",
-        ["bronco_id", "name", "email", "card_id", "station_id", "station_name", "active", "updated_at", "granted_via", "granted_by", "granted_at", "notes"],
-        certifications,
+    certifications = enrich_timestamped_rows(
+        conn.execute(
+            """
+            SELECT bronco_certifications.bronco_id, people.name, people.email,
+                   cards.card_id, bronco_certifications.station_id,
+                   stations.name AS station_name, bronco_certifications.active,
+                   bronco_certifications.updated_at, certifications.granted_via,
+                   certifications.granted_by, certifications.granted_at,
+                   COALESCE(certifications.granted_at, bronco_certifications.updated_at) AS certification_date,
+                   bronco_certifications.notes
+            FROM bronco_certifications
+            JOIN people ON people.bronco_id = bronco_certifications.bronco_id
+            JOIN stations ON stations.id = bronco_certifications.station_id
+            LEFT JOIN cards ON lower(cards.bronco_id) = lower(people.bronco_id)
+            LEFT JOIN certifications
+              ON certifications.card_id = cards.card_id
+             AND certifications.station_id = bronco_certifications.station_id
+            ORDER BY people.name, stations.name
+            """
+        ).fetchall(),
+        "certification_date",
     )
-
     cards = conn.execute(
         """
         SELECT cards.card_id, cards.bronco_id, cards.name, cards.email,
@@ -5607,6 +6338,157 @@ def build_master_workbook(conn):
         ORDER BY cards.name, cards.card_id
         """
     ).fetchall()
+
+    pending_canvas_rows = enrich_timestamped_rows(
+        canvas_sync_task_rows(conn, include_bronco_id=True),
+        "created_at",
+    )
+
+    swipe_rows = enrich_timestamped_rows(
+        conn.execute(
+            """
+            SELECT swipe_events.timestamp, swipe_events.card_id, cards.bronco_id,
+                   cards.name, cards.email, cards.designation,
+                   swipe_events.station_id, swipe_events.station_name,
+                   swipe_events.station_kind, swipe_events.action,
+                   swipe_events.allowed, swipe_events.duration_seconds,
+                   swipe_events.active_users, swipe_events.warning,
+                   swipe_events.details, swipe_events.event_id
+            FROM swipe_events
+            LEFT JOIN cards ON cards.card_id = swipe_events.card_id
+            ORDER BY swipe_events.id
+            """
+        ).fetchall(),
+        "timestamp",
+    )
+
+    audit_rows = enrich_timestamped_rows(
+        conn.execute(
+            """
+            SELECT timestamp, actor_card_id, actor_name, actor_role, action,
+                   target_type, target_id, details
+            FROM audit_log ORDER BY id
+            """
+        ).fetchall(),
+        "timestamp",
+    )
+    for row in audit_rows:
+        row["details"] = display_audit_details(row.get("details"))
+
+    term_rows, station_term_rows, certification_term_rows = workbook_term_summaries(
+        swipe_rows,
+        certifications,
+    )
+    calendar_rows = [
+        {
+            "academic_year": period["academic_year"],
+            "term": period["term"],
+            "session": period["session"],
+            "classes_start": period["start"],
+            "classes_end": period["classes_end"],
+            "finals_start": period["finals_start"],
+            "finals_end": period["finals_end"],
+            "grades_due": period["grades_due"],
+        }
+        for period in ACADEMIC_PERIODS
+    ]
+    overview_rows = [
+        {"metric": "generated_at", "value": generated_at},
+        {"metric": "people", "value": len(people)},
+        {"metric": "cards", "value": len(cards)},
+        {"metric": "certifications_granted", "value": sum(1 for row in certifications if row.get("active"))},
+        {"metric": "certification_rows", "value": len(certifications)},
+        {"metric": "swipe_rows", "value": len(swipe_rows)},
+        {"metric": "terms_with_activity", "value": len(term_rows)},
+        {
+            "metric": "total_station_hours",
+            "value": round(
+                sum(float(row.get("station_hours") or 0) for row in term_rows),
+                2,
+            ),
+        },
+    ]
+    add_workbook_sheet(workbook, "Overview", ["metric", "value"], overview_rows)
+    add_workbook_sheet(
+        workbook,
+        "Term Summary",
+        [
+            "term",
+            "swipes",
+            "visitor_entries",
+            "station_sessions",
+            "station_hours",
+            "unique_station_users",
+            "certifications_granted",
+            "certified_people",
+            "inactive_certifications",
+            "warnings",
+        ],
+        term_rows,
+    )
+    add_workbook_sheet(
+        workbook,
+        "Station by Term",
+        ["term", "station_id", "station_name", "sessions", "hours", "unique_users"],
+        station_term_rows,
+    )
+    add_workbook_sheet(
+        workbook,
+        "Certs by Term",
+        [
+            "term",
+            "station_id",
+            "station_name",
+            "certifications_granted",
+            "inactive_certifications",
+            "certified_people",
+        ],
+        certification_term_rows,
+    )
+    add_workbook_sheet(
+        workbook,
+        "Academic Calendar",
+        [
+            "academic_year",
+            "term",
+            "session",
+            "classes_start",
+            "classes_end",
+            "finals_start",
+            "finals_end",
+            "grades_due",
+        ],
+        calendar_rows,
+    )
+    add_workbook_sheet(
+        workbook, "People",
+        ["bronco_id", "name", "email", "designation", "active", "assigned_card_id", "notes", "updated_at"],
+        people,
+    )
+    add_workbook_sheet(
+        workbook, "Certifications",
+        [
+            "academic_year",
+            "term",
+            "event_date",
+            "week_start",
+            "month",
+            "bronco_id",
+            "name",
+            "email",
+            "card_id",
+            "station_id",
+            "station_name",
+            "active",
+            "updated_at",
+            "granted_via",
+            "granted_by",
+            "granted_at",
+            "certification_date",
+            "notes",
+        ],
+        sorted_timestamped_rows(certifications, "certification_date"),
+    )
     add_workbook_sheet(
         workbook, "Cards",
         ["card_id", "bronco_id", "name", "email", "designation", "active", "login_username", "login_role", "login_active", "notes", "updated_at"],
@@ -5615,41 +6497,78 @@ def build_master_workbook(conn):
 
     add_workbook_sheet(
         workbook, "Pending Canvas",
-        ["bronco_id", "name", "email", "card_id", "station_id", "station_name", "desired_active", "created_at", "created_by_card_id", "created_by_name"],
-        canvas_sync_task_rows(conn, include_bronco_id=True),
+        [
+            "academic_year",
+            "term",
+            "academic_session",
+            "period_status",
+            "event_date",
+            "week_start",
+            "month",
+            "bronco_id",
+            "name",
+            "email",
+            "card_id",
+            "station_id",
+            "station_name",
+            "desired_active",
+            "created_at",
+            "created_by_card_id",
+            "created_by_name",
+        ],
+        sorted_timestamped_rows(pending_canvas_rows, "created_at"),
     )
 
-    swipe_rows = conn.execute(
-        """
-        SELECT swipe_events.timestamp, swipe_events.card_id, cards.bronco_id,
-               cards.name, cards.email, cards.designation,
-               swipe_events.station_id, swipe_events.station_name,
-               swipe_events.station_kind, swipe_events.action,
-               swipe_events.allowed, swipe_events.duration_seconds,
-               swipe_events.active_users, swipe_events.warning,
-               swipe_events.details, swipe_events.event_id
-        FROM swipe_events
-        LEFT JOIN cards ON cards.card_id = swipe_events.card_id
-        ORDER BY swipe_events.id
-        """
-    ).fetchall()
     add_workbook_sheet(
         workbook, "Swipe Log",
-        ["timestamp", "card_id", "bronco_id", "name", "email", "designation", "station_id", "station_name", "station_kind", "action", "allowed", "duration_seconds", "active_users", "warning", "details", "event_id"],
-        swipe_rows,
+        [
+            "academic_year",
+            "term",
+            "academic_session",
+            "period_status",
+            "event_date",
+            "week_start",
+            "month",
+            "timestamp",
+            "card_id",
+            "bronco_id",
+            "name",
+            "email",
+            "designation",
+            "station_id",
+            "station_name",
+            "station_kind",
+            "action",
+            "allowed",
+            "duration_seconds",
+            "active_users",
+            "warning",
+            "details",
+            "event_id",
+        ],
+        sorted_timestamped_rows(swipe_rows, "timestamp"),
     )
 
-    audit_rows = conn.execute(
-        """
-        SELECT timestamp, actor_card_id, actor_name, actor_role, action,
-               target_type, target_id, details
-        FROM audit_log ORDER BY id
-        """
-    ).fetchall()
     add_workbook_sheet(
         workbook, "Audit Log",
-        ["timestamp", "actor_card_id", "actor_name", "actor_role", "action", "target_type", "target_id", "details"],
-        audit_rows,
+        [
+            "academic_year",
+            "term",
+            "academic_session",
+            "period_status",
+            "event_date",
+            "week_start",
+            "month",
+            "timestamp",
+            "actor_card_id",
+            "actor_name",
+            "actor_role",
+            "action",
+            "target_type",
+            "target_id",
+            "details",
+        ],
+        sorted_timestamped_rows(audit_rows, "timestamp"),
     )
 
     analytics = analytics_snapshot(conn, days=30)
@@ -5719,6 +6638,40 @@ def analytics_api():
         analytics = analytics_snapshot(conn, days=days)
         conn.close()
     return jsonify({"ok": True, "analytics": analytics})
+
+
+@app.post("/api/schedule")
+def save_schedule():
+    role, error = require_access("admin")
+    if error:
+        return error
+
+    account = account_for_token(token_from_request())
+    try:
+        schedule = normalize_space_schedule(request_json())
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+
+    with db_lock:
+        conn = db_connect()
+        save_space_schedule(conn, schedule)
+        add_audit_log(
+            conn,
+            account,
+            "schedule_updated",
+            "settings",
+            "open-hours",
+            {
+                "open_days": schedule["open_days"],
+                "open_time": schedule["open_time"],
+                "close_time": schedule["close_time"],
+            },
+        )
+        conn.commit()
+        analytics = analytics_snapshot(conn, days=30)
+        conn.close()
+
+    return jsonify({"ok": True, "schedule": schedule, "analytics": analytics})
 
 
 @app.get("/master-export.xlsx")
@@ -5878,7 +6831,12 @@ def audit_csv():
         "target_id",
         "details",
     ]
-    return csv_reply("audit.csv", headers, [dict(row) for row in rows])
+    audit_rows = []
+    for row in rows:
+        audit_row = dict(row)
+        audit_row["details"] = display_audit_details(audit_row.get("details"))
+        audit_rows.append(audit_row)
+    return csv_reply("audit.csv", headers, audit_rows)
 
 
 @app.get("/active.csv")

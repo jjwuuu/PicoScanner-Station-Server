@@ -49,6 +49,8 @@
       --space-4: 16px;
       --space-5: 24px;
       --space-6: 32px;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-top: env(safe-area-inset-top, 0px);
     }
 
     * {
@@ -63,6 +65,7 @@
       font-size: 14px;
       line-height: 1.45;
       -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
 
     main {
@@ -490,6 +493,52 @@
 
     .analytics-controls > div {
       min-width: 150px;
+    }
+
+    .schedule-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(120px, 0.6fr) minmax(120px, 0.6fr) auto;
+      gap: var(--space-3);
+      align-items: end;
+      padding: 16px 18px;
+    }
+
+    .weekday-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .weekday-chip {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      border: 1px solid var(--field-border);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .weekday-chip input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .weekday-chip:has(input:checked) {
+      border-color: var(--green);
+      background: var(--soft-green);
+      color: var(--green);
+    }
+
+    .schedule-status {
+      padding: 0 18px 16px;
+      color: var(--muted);
+      font-size: 13px;
     }
 
     .analytics-summary {
@@ -1204,7 +1253,10 @@
     }
 
     .modal-card {
+      display: flex;
+      flex-direction: column;
       width: min(520px, 100%);
+      max-height: calc(100dvh - 48px);
       overflow: hidden;
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -1218,7 +1270,9 @@
     }
 
     .modal-body {
+      flex: 1 1 auto;
       padding: 18px 20px;
+      overflow: auto;
     }
 
     .modal-body p {
@@ -1363,33 +1417,62 @@
     }
 
     @media (max-width: 880px) {
+      html {
+        scroll-padding-top: 84px;
+      }
+
       main {
-        width: min(100vw - 24px, 1200px);
-        margin: 16px auto 32px;
+        width: 100%;
+        margin: 0;
+        padding: max(10px, var(--safe-top)) 12px calc(32px + var(--safe-bottom));
       }
 
       header {
         align-items: flex-start;
         flex-direction: column;
-        padding: 16px;
+        gap: 12px;
+        margin: 0 0 10px;
+        padding: 14px;
+        border-left: 0;
+        border-right: 0;
+        border-radius: 0;
       }
 
       h1 {
-        font-size: 24px;
+        max-width: 10ch;
+        font-size: 25px;
+        line-height: 0.98;
       }
 
-      .header-tools,
-      .access-panel {
-        justify-content: flex-start;
+      .header-tools {
+        display: grid;
+        gap: 8px;
+        justify-content: stretch;
         width: 100%;
       }
 
+      .access-panel {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        align-items: end;
+        justify-content: stretch;
+        width: 100%;
+        padding: 10px;
+      }
+
+      .access-panel > div {
+        min-width: 0;
+      }
+
       .access-panel input {
-        width: min(100%, 260px);
+        width: 100%;
+        min-height: 46px;
       }
 
       .access-status {
+        grid-column: 1 / -1;
         min-width: 0;
+        min-height: 24px;
         text-align: left;
         justify-content: flex-start;
       }
@@ -1398,8 +1481,35 @@
         display: none;
       }
 
-      .tab-menu { display: block; width: 100%; margin-bottom: var(--space-4); }
-      .tab-menu select { min-height: 46px; }
+      .tab-menu {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        display: block;
+        width: calc(100% + 24px);
+        margin: 0 -12px 14px;
+        padding: 8px 12px;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: rgba(16, 18, 20, 0.96);
+        backdrop-filter: blur(12px);
+      }
+
+      .tab-menu label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+
+      .tab-menu select {
+        min-height: 48px;
+        border-color: var(--focus);
+        background: var(--soft-blue);
+        color: var(--heading-ink);
+        font-weight: 800;
+      }
 
       .tab-button {
         flex: 0 0 auto;
@@ -1444,6 +1554,12 @@
         justify-content: flex-start;
       }
 
+      .permission-actions button,
+      .pending-row button,
+      .checkout-button {
+        width: 100%;
+      }
+
       .form-grid .full {
         grid-column: auto;
       }
@@ -1457,10 +1573,22 @@
       .toolbar {
         align-items: stretch;
         flex-wrap: wrap;
+        padding: 12px;
       }
 
       .toolbar > div {
         width: 100%;
+      }
+
+      .panel-heading {
+        align-items: stretch;
+        flex-direction: column;
+        padding: 12px;
+      }
+
+      .panel-heading button {
+        width: 100%;
+        min-height: 44px;
       }
 
       .stack-table {
@@ -1471,35 +1599,75 @@
       .stack-table table { min-width: 0; }
       .stack-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
       .stack-table tbody, .stack-table tr, .stack-table td { display: block; width: 100%; }
-      .stack-table tr { padding: 12px; border-bottom: 1px solid var(--line); }
-      .stack-table td { padding: 5px 0; border: 0; }
-      .stack-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
+      .stack-table tr { margin: 0; padding: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+      .stack-table tbody tr:nth-child(even) td,
+      .stack-table tbody tr:hover td { background: transparent; }
+      .stack-table td { padding: 6px 0; border: 0; }
+      .stack-table td::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
       .stack-table td[colspan]::before { display: none; }
-
     }
 
     @media (max-width: 620px) {
       main {
-        width: min(100vw - 16px, 1200px);
-        margin-top: 8px;
+        padding-left: 8px;
+        padding-right: 8px;
       }
 
-      .summary {
+      input,
+      select,
+      textarea,
+      button {
+        font-size: 16px;
+      }
+
+      input,
+      select,
+      textarea,
+      button,
+      .weekday-chip {
+        min-height: 48px;
+      }
+
+      .access-panel {
         grid-template-columns: 1fr;
       }
 
+      .access-panel button {
+        width: 100%;
+      }
+
+      #connection {
+        padding-left: 2px;
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
       .analytics-header,
-      .analytics-controls {
+      .analytics-controls,
+      .schedule-form {
         align-items: stretch;
         flex-direction: column;
       }
 
+      .schedule-form {
+        display: flex;
+      }
+
+      .weekday-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .analytics-summary {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
       }
 
       .chart-row {
-        grid-template-columns: 1fr auto;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
       }
 
       .chart-track {
@@ -1508,20 +1676,117 @@
       }
 
       .metric {
-        min-height: 108px;
+        min-height: 92px;
+        padding: 16px 12px 14px;
+      }
+
+      .metric span,
+      .analytics-metric span {
+        font-size: 10px;
       }
 
       .metric strong {
-        font-size: 36px;
+        font-size: 31px;
+      }
+
+      .analytics-metric {
+        min-height: 86px;
+        padding: 12px;
+      }
+
+      .analytics-metric strong {
+        font-size: 21px;
+      }
+
+      h2,
+      .panel-heading h2 {
+        padding: 14px 12px;
+      }
+
+      .form-grid,
+      .card-editor-layout,
+      .pending-list,
+      .permission-results {
+        padding: 12px;
       }
 
       .form-actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 20;
         align-items: stretch;
         flex-direction: column;
+        padding: 12px 12px calc(12px + var(--safe-bottom));
+        margin-left: -1px;
+        margin-right: -1px;
+        background: rgba(16, 18, 20, 0.96);
+        backdrop-filter: blur(12px);
       }
 
       .form-actions button {
         width: 100%;
+      }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: 1fr;
+        width: 100%;
+      }
+
+      .segmented button {
+        min-height: 42px;
+      }
+
+      .modal-backdrop {
+        align-items: end;
+        padding: 8px;
+        padding-bottom: max(8px, var(--safe-bottom));
+      }
+
+      .modal-card {
+        width: 100%;
+        max-height: calc(100dvh - 16px - var(--safe-top));
+        border-radius: var(--radius) var(--radius) 0 0;
+      }
+
+      .modal-card h2 {
+        padding: 14px 16px;
+      }
+
+      .modal-body {
+        padding: 14px 16px;
+      }
+
+      .modal-body .form-grid {
+        padding: 12px 0 0 !important;
+      }
+
+      .modal-actions {
+        position: sticky;
+        bottom: 0;
+        flex-direction: column-reverse;
+        padding: 12px 16px calc(12px + var(--safe-bottom));
+        background: rgba(16, 18, 20, 0.96);
+      }
+
+      .modal-actions button {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .summary,
+      .analytics-summary {
+        grid-template-columns: 1fr;
+      }
+
+      .metric,
+      .analytics-metric {
+        min-height: auto;
+      }
+
+      .analytics-status span {
+        white-space: normal;
       }
     }
   </style>
@@ -1558,13 +1823,14 @@
         Cards
         <span id="pending-card-count" class="tab-badge hidden">0</span>
       </button>
+      <button class="tab-button hidden" data-tab="kits" type="button">Kits</button>
       <button class="tab-button hidden" data-tab="canvas" type="button">
         Canvas Queue
         <span id="canvas-queue-count" class="tab-badge hidden">0</span>
       </button>
       <button class="tab-button hidden" data-tab="admin" type="button">Admin</button>
     </nav>
-    <div class="tab-menu"><label for="mobile-tab-menu">View</label><select id="mobile-tab-menu"><option value="dashboard">Live</option><option value="swipes" hidden>Swipes</option><option value="certifications" hidden>Certifications</option><option value="cards" hidden>Cards</option><option value="canvas" hidden>Canvas Queue</option><option value="admin" hidden>Admin</option></select></div>
+    <div class="tab-menu"><label for="mobile-tab-menu">View</label><select id="mobile-tab-menu"><option value="dashboard">Live</option><option value="swipes" hidden>Swipes</option><option value="certifications" hidden>Certifications</option><option value="cards" hidden>Cards</option><option value="kits" hidden>Kits</option><option value="canvas" hidden>Canvas Queue</option><option value="admin" hidden>Admin</option></select></div>
 
     <section id="tab-dashboard" class="tab-panel active" role="tabpanel">
       <section class="summary">
@@ -1631,6 +1897,7 @@
                   <th>Person</th>
                   <th>Station</th>
                   <th>Elapsed</th>
+                  <th id="session-action-header" class="hidden">Checkout</th>
                 </tr>
               </thead>
               <tbody id="sessions-body"></tbody>
@@ -1683,6 +1950,7 @@
                 <th>Duration</th>
                 <th>Inside</th>
                 <th>Warning</th>
+                <th id="swipe-actions-heading" class="hidden">Actions</th>
               </tr>
             </thead>
             <tbody id="swipes-body"></tbody>
@@ -1867,6 +2135,26 @@
           </div>
         </section>
 
+        <section id="schedule-panel" class="panel full-row hidden">
+          <h2>Open Hours</h2>
+          <form id="schedule-form" class="schedule-form">
+            <div>
+              <label>Open days</label>
+              <div class="weekday-grid" id="schedule-days"></div>
+            </div>
+            <div>
+              <label for="schedule-open">Open time</label>
+              <input id="schedule-open" type="time" required>
+            </div>
+            <div>
+              <label for="schedule-close">Close time</label>
+              <input id="schedule-close" type="time" required>
+            </div>
+            <button class="primary" type="submit">Save Hours</button>
+          </form>
+          <div id="schedule-status" class="schedule-status"></div>
+        </section>
+
         <div id="station-rules-panel" class="panel full-row">
           <h2>Station Rules</h2>
           <div class="table-scroll station-rules-table">
@@ -1898,7 +2186,6 @@
         <section id="audit-panel" class="panel full-row hidden">
           <div class="panel-heading">
             <h2>Audit Log</h2>
-            <button id="download-audit" type="button">Export CSV</button>
           </div>
           <div class="table-scroll wide-table">
             <table>
@@ -2049,6 +2336,96 @@
         </div>
       </section>
     </section>
+
+    <section id="tab-kits" class="tab-panel" role="tabpanel">
+      <div id="kit-lock" class="panel locked">
+        <strong>Staff or Admin login required</strong>
+        <span class="subtle">Kits are checked out by swiping a kit card and then a user card at the kit reader.</span>
+      </div>
+
+      <section id="kit-content" class="grid hidden">
+        <div class="panel full-row">
+          <h2>Kit</h2>
+          <form id="kit-form">
+            <div class="form-grid">
+              <div>
+                <label for="kit-id">Kit ID</label>
+                <input id="kit-id" maxlength="128" placeholder="auto from name for new kits">
+              </div>
+              <div>
+                <label for="kit-name">Name</label>
+                <input id="kit-name" maxlength="200" required placeholder="Camera kit">
+              </div>
+              <div>
+                <label for="kit-card-id">Kit Card ID</label>
+                <input id="kit-card-id" maxlength="128" required placeholder="RFID tag on the kit">
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>Kit enabled</strong>
+                  <small>Disabled kits cannot be checked out by swipe.</small>
+                </div>
+                <label class="switch" for="kit-active" title="Enable or disable this kit">
+                  <input id="kit-active" type="checkbox" checked>
+                  <span class="switch-track" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div class="full">
+                <label for="kit-notes">Notes</label>
+                <textarea id="kit-notes" maxlength="4000" placeholder="Contents, missing parts, storage location"></textarea>
+              </div>
+            </div>
+            <div class="form-actions">
+              <span id="kit-status" class="subtle" aria-live="polite" aria-atomic="true"></span>
+              <button type="button" id="clear-kit">Clear</button>
+              <button class="primary" type="submit">Save Kit</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="panel full-row">
+          <h2>Kits</h2>
+          <div class="toolbar">
+            <div class="wide-control">
+              <label for="kit-filter">Lookup</label>
+              <input id="kit-filter" maxlength="200" autocomplete="off" placeholder="Search kit, card, or borrower">
+            </div>
+            <span id="kit-list-summary" class="subtle" aria-live="polite"></span>
+          </div>
+          <div class="table-scroll wide-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Kit</th>
+                  <th>Kit Card</th>
+                  <th>Status</th>
+                  <th>Checked Out To</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="kits-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel full-row">
+          <h2>Kit Checkout History</h2>
+          <div class="table-scroll wide-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Kit</th>
+                  <th>Person</th>
+                  <th>Checked Out</th>
+                  <th>Returned</th>
+                </tr>
+              </thead>
+              <tbody id="kit-history-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </section>
   </main>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
@@ -2084,6 +2461,79 @@
     </div>
   </div>
 
+  <div id="swipe-edit-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="swipe-edit-title">
+    <div class="modal-card">
+      <h2 id="swipe-edit-title">Edit Swipe</h2>
+      <form id="swipe-edit-form">
+        <div class="modal-body">
+          <div class="form-grid">
+            <div>
+              <label for="swipe-edit-time">Time</label>
+              <input id="swipe-edit-time" type="datetime-local" required>
+            </div>
+            <div>
+              <label for="swipe-edit-card">Card ID</label>
+              <input id="swipe-edit-card" maxlength="128" required>
+            </div>
+            <div>
+              <label for="swipe-edit-station-id">Reader ID</label>
+              <input id="swipe-edit-station-id" maxlength="128" required>
+            </div>
+            <div>
+              <label for="swipe-edit-station-name">Reader Name</label>
+              <input id="swipe-edit-station-name" maxlength="200" required>
+            </div>
+            <div>
+              <label for="swipe-edit-kind">Reader Type</label>
+              <select id="swipe-edit-kind">
+                <option value="door">Door</option>
+                <option value="station">Station</option>
+                <option value="kit">Kit</option>
+              </select>
+            </div>
+            <div>
+              <label for="swipe-edit-action">Action</label>
+              <input id="swipe-edit-action" maxlength="128" required>
+            </div>
+            <div>
+              <label for="swipe-edit-duration">Duration Seconds</label>
+              <input id="swipe-edit-duration" type="number" min="0" step="1">
+            </div>
+            <label class="checkline">
+              <input id="swipe-edit-recalculate-duration" type="checkbox">
+              <span>Auto duration</span>
+            </label>
+            <div>
+              <label for="swipe-edit-active-users">Inside Count</label>
+              <input id="swipe-edit-active-users" type="number" min="0" step="1">
+            </div>
+            <div>
+              <label for="swipe-edit-warning">Warning</label>
+              <input id="swipe-edit-warning" maxlength="128">
+            </div>
+            <div>
+              <label for="swipe-edit-event-id">Event ID</label>
+              <input id="swipe-edit-event-id" maxlength="128">
+            </div>
+            <label class="checkline">
+              <input id="swipe-edit-allowed" type="checkbox">
+              <span>Allowed</span>
+            </label>
+            <div class="full">
+              <label for="swipe-edit-details">Details</label>
+              <textarea id="swipe-edit-details" maxlength="4000"></textarea>
+            </div>
+          </div>
+          <p id="swipe-edit-status" class="subtle" aria-live="polite" aria-atomic="true"></p>
+        </div>
+        <div class="modal-actions">
+          <button id="swipe-edit-cancel" type="button">Cancel</button>
+          <button class="primary" type="submit">Save Swipe</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     const state = {
       cards: [],
@@ -2094,8 +2544,11 @@
       certifyPermissions: [],
       canvasSyncTasks: [],
       auditLog: [],
+      kits: [],
+      kitCheckouts: [],
       analytics: null,
       analyticsDays: 30,
+      schedule: null,
       canCertifyStationIds: [],
       pendingCards: [],
       pendingCardCount: 0,
@@ -2114,6 +2567,9 @@
       selectedCertPersonFilterCardId: "",
       selectedCertStationId: "",
       selectedCertStationFilterStationId: "",
+      selectedKitId: "",
+      selectedSwipeEventId: null,
+      kitFilter: "",
       expandedCertificationCards: new Set(),
       dashboardRequestInFlight: false,
       adminRequestInFlight: false,
@@ -2144,11 +2600,11 @@
     const stationUsagePanel = document.getElementById("station-usage-panel");
     const stationPeopleHeader = document.getElementById("station-people-header");
     const activeSessionsPanel = document.getElementById("active-sessions-panel");
+    const sessionActionHeader = document.getElementById("session-action-header");
     const warningsPanel = document.getElementById("warnings-panel");
     const clearWarningsButton = document.getElementById("clear-warnings");
     const recentSwipesPanel = document.getElementById("recent-swipes-panel");
     const downloadSwipesButton = document.getElementById("download-swipes");
-    const downloadAuditButton = document.getElementById("download-audit");
     const downloadCardsButton = document.getElementById("download-cards");
     const downloadMasterButton = document.getElementById("download-master");
     const analyticsPanel = document.getElementById("analytics-panel");
@@ -2160,6 +2616,12 @@
     const analyticsVisitorEntries = document.getElementById("analytics-visitor-entries");
     const analyticsTopStation = document.getElementById("analytics-top-station");
     const analyticsBusiestHour = document.getElementById("analytics-busiest-hour");
+    const schedulePanel = document.getElementById("schedule-panel");
+    const scheduleForm = document.getElementById("schedule-form");
+    const scheduleDays = document.getElementById("schedule-days");
+    const scheduleOpen = document.getElementById("schedule-open");
+    const scheduleClose = document.getElementById("schedule-close");
+    const scheduleStatus = document.getElementById("schedule-status");
     const stationTimeChart = document.getElementById("station-time-chart");
     const stationSessionChart = document.getElementById("station-session-chart");
     const hourlyUsageChart = document.getElementById("hourly-usage-chart");
@@ -2170,6 +2632,7 @@
     const sessionsBody = document.getElementById("sessions-body");
     const warningsBody = document.getElementById("warnings-body");
     const swipesBody = document.getElementById("swipes-body");
+    const swipeActionsHeading = document.getElementById("swipe-actions-heading");
     const auditPanel = document.getElementById("audit-panel");
     const auditBody = document.getElementById("audit-body");
     const cardsBody = document.getElementById("cards-body");
@@ -2208,6 +2671,20 @@
     const certifyPermissionsBody = document.getElementById("certify-permissions-body");
     const cardLock = document.getElementById("card-lock");
     const cardContent = document.getElementById("card-content");
+    const kitLock = document.getElementById("kit-lock");
+    const kitContent = document.getElementById("kit-content");
+    const kitForm = document.getElementById("kit-form");
+    const kitIdInput = document.getElementById("kit-id");
+    const kitNameInput = document.getElementById("kit-name");
+    const kitCardIdInput = document.getElementById("kit-card-id");
+    const kitActiveInput = document.getElementById("kit-active");
+    const kitNotesInput = document.getElementById("kit-notes");
+    const kitStatus = document.getElementById("kit-status");
+    const clearKitButton = document.getElementById("clear-kit");
+    const kitFilter = document.getElementById("kit-filter");
+    const kitListSummary = document.getElementById("kit-list-summary");
+    const kitsBody = document.getElementById("kits-body");
+    const kitHistoryBody = document.getElementById("kit-history-body");
     const cardFilter = document.getElementById("card-filter");
     const cardListSummary = document.getElementById("card-list-summary");
     const pendingCardCount = document.getElementById("pending-card-count");
@@ -2227,10 +2704,28 @@
     const confirmCancel = document.getElementById("confirm-cancel");
     const confirmAccept = document.getElementById("confirm-accept");
     const checkoutModal = document.getElementById("checkout-modal");
+    const checkoutTitle = document.getElementById("checkout-title");
     const checkoutMessage = document.getElementById("checkout-message");
     const checkoutTime = document.getElementById("checkout-time");
     const checkoutCancel = document.getElementById("checkout-cancel");
     const checkoutAccept = document.getElementById("checkout-accept");
+    const swipeEditModal = document.getElementById("swipe-edit-modal");
+    const swipeEditForm = document.getElementById("swipe-edit-form");
+    const swipeEditTime = document.getElementById("swipe-edit-time");
+    const swipeEditCard = document.getElementById("swipe-edit-card");
+    const swipeEditStationId = document.getElementById("swipe-edit-station-id");
+    const swipeEditStationName = document.getElementById("swipe-edit-station-name");
+    const swipeEditKind = document.getElementById("swipe-edit-kind");
+    const swipeEditAction = document.getElementById("swipe-edit-action");
+    const swipeEditDuration = document.getElementById("swipe-edit-duration");
+    const swipeEditRecalculateDuration = document.getElementById("swipe-edit-recalculate-duration");
+    const swipeEditActiveUsers = document.getElementById("swipe-edit-active-users");
+    const swipeEditWarning = document.getElementById("swipe-edit-warning");
+    const swipeEditEventId = document.getElementById("swipe-edit-event-id");
+    const swipeEditAllowed = document.getElementById("swipe-edit-allowed");
+    const swipeEditDetails = document.getElementById("swipe-edit-details");
+    const swipeEditStatus = document.getElementById("swipe-edit-status");
+    const swipeEditCancel = document.getElementById("swipe-edit-cancel");
     const toast = document.getElementById("toast");
     const mobileTabMenu = document.getElementById("mobile-tab-menu");
     const swipeQuery = document.getElementById("swipe-query");
@@ -2483,6 +2978,10 @@
       return action;
     }
 
+    function canRecalculateSwipeDuration(action) {
+      return ["exit", "manual_exit", "station_out", "station_auto_out"].includes(action);
+    }
+
     function warningLabel(warning) {
       const labels = { left_with_station_active: "Left while checked into a station", unknown_card: "Unknown card", inactive_card: "Inactive card", moved_station_without_swipe_out: "Moved stations without signing out", station_swipe_without_door_entry: "Station swipe without a door entry", cert_granted_via_swipe: "Certification granted by reader", certification_required: "Certification required", not_certified: "Certification required", cert_override_active: "Temporary certification override active" };
       return labels[warning] || String(warning || "").replaceAll("_", " ");
@@ -2519,7 +3018,7 @@
 
       return entries
         .map(([key, value]) => {
-          const label = key.replaceAll("_", " ");
+          const label = key === "source_ip" ? "ip" : key.replaceAll("_", " ");
           const text = Array.isArray(value) ? value.join(", ") : String(value);
           return `${label}: ${text}`;
         })
@@ -2606,6 +3105,7 @@
       setTabVisible("swipes", elevated);
       setTabVisible("certifications", loggedIn);
       setTabVisible("cards", elevated);
+      setTabVisible("kits", elevated);
       setTabVisible("canvas", elevated);
       setTabVisible("admin", elevated);
 
@@ -2648,6 +3148,7 @@
       const certViewAccess = canViewCertifications();
       const certEditAccess = canSubmitCertifications();
       const stationRuleAccess = canManageStationRules();
+      const kitAccess = canManageStationRules();
       const showBroncoId = canManageAccounts();
       const elevated = ["admin", "staff"].includes(state.role);
 
@@ -2685,11 +3186,13 @@
       certifyPermissionsPanel.classList.toggle("hidden", !canManageCertifyPermissions());
       canvasImportPanel.classList.toggle("hidden", !showBroncoId);
       analyticsPanel.classList.toggle("hidden", !showBroncoId);
+      schedulePanel.classList.toggle("hidden", !showBroncoId);
       canvasSyncPanel.classList.toggle("hidden", !elevated);
       cardLock.classList.toggle("hidden", cardAccess);
       cardContent.classList.toggle("hidden", !cardAccess);
+      kitLock.classList.toggle("hidden", kitAccess);
+      kitContent.classList.toggle("hidden", !kitAccess);
       downloadSwipesButton.classList.toggle("hidden", !showBroncoId);
-      downloadAuditButton.classList.toggle("hidden", !showBroncoId);
       downloadCardsButton.classList.toggle("hidden", !showBroncoId);
       downloadMasterButton.classList.toggle("hidden", !showBroncoId);
 
@@ -2698,6 +3201,9 @@
       });
       document.querySelectorAll("#card-form input, #card-form select, #card-form textarea, #card-form button").forEach(item => {
         item.disabled = !cardAccess;
+      });
+      document.querySelectorAll("#kit-form input, #kit-form textarea, #kit-form button").forEach(item => {
+        item.disabled = !canManageAccounts();
       });
       if (cardDesignationStaff) {
         cardDesignationStaff.hidden = state.role === "volunteer";
@@ -3378,17 +3884,28 @@
       stationUsagePanel.classList.remove("hidden");
       stationPeopleHeader.classList.toggle("hidden", !canViewFull);
       activeSessionsPanel.classList.toggle("hidden", !canViewFull);
+      sessionActionHeader.classList.toggle("hidden", !canViewFull);
       warningsPanel.classList.toggle("hidden", !canViewFull);
       clearWarningsButton.classList.toggle("hidden", !canViewFull);
       recentSwipesPanel.classList.toggle("hidden", !canViewFull);
       downloadSwipesButton.classList.toggle("hidden", !canViewFull);
-      downloadAuditButton.classList.toggle("hidden", role !== "admin");
     }
 
     function openManualCheckoutDialog(cardId, name) {
       if (!["admin", "staff"].includes(state.role)) return;
-      state.manualCheckoutTarget = { cardId, name };
+      state.manualCheckoutTarget = { type: "person", cardId, name };
+      checkoutTitle.textContent = "Manual Checkout";
       checkoutMessage.textContent = `Set the exit time for ${name || "this person"}. Any open station sessions will close at the same time.`;
+      checkoutTime.value = localDateTimeInputValue();
+      checkoutModal.classList.remove("hidden");
+      checkoutTime.focus();
+    }
+
+    function openStationCheckoutDialog(sessionId, personName, stationName) {
+      if (!["admin", "staff"].includes(state.role)) return;
+      state.manualCheckoutTarget = { type: "station", sessionId, personName, stationName };
+      checkoutTitle.textContent = "Station Checkout";
+      checkoutMessage.textContent = `Set the station checkout time for ${personName || "this person"} at ${stationName || "this station"}.`;
       checkoutTime.value = localDateTimeInputValue();
       checkoutModal.classList.remove("hidden");
       checkoutTime.focus();
@@ -3398,6 +3915,7 @@
       checkoutModal.classList.add("hidden");
       state.manualCheckoutTarget = null;
       checkoutTime.value = "";
+      checkoutTitle.textContent = "Manual Checkout";
     }
 
     async function submitManualCheckout() {
@@ -3411,15 +3929,119 @@
 
       checkoutAccept.disabled = true;
       try {
-        await postJson(`/api/active-people/${encodeURIComponent(target.cardId)}/checkout`, {
-          exited_at: exitDate.toISOString(),
-        });
+        if (target.type === "station") {
+          await postJson(`/api/active-sessions/${encodeURIComponent(target.sessionId)}/checkout`, {
+            exited_at: exitDate.toISOString(),
+          });
+        } else {
+          await postJson(`/api/active-people/${encodeURIComponent(target.cardId)}/checkout`, {
+            exited_at: exitDate.toISOString(),
+          });
+        }
         closeManualCheckoutDialog();
         await refreshDashboard();
       } catch (error) {
-        window.alert(error.message || "Could not check out this person.");
+        window.alert(error.message || "Could not check out.");
       } finally {
         checkoutAccept.disabled = false;
+      }
+    }
+
+    function openSwipeEditDialog(swipe) {
+      if (!swipe || state.role !== "admin") return;
+      state.selectedSwipeEventId = swipe.id;
+      swipeEditTime.value = localDateTimeInputValue(swipe.timestamp);
+      swipeEditCard.value = swipe.card_id || "";
+      swipeEditStationId.value = swipe.station_id || "";
+      swipeEditStationName.value = swipe.station_name || "";
+      swipeEditKind.value = ["door", "station", "kit"].includes(swipe.station_kind)
+        ? swipe.station_kind
+        : "station";
+      swipeEditAction.value = swipe.action || "";
+      swipeEditDuration.value = swipe.duration_seconds === null || swipe.duration_seconds === undefined
+        ? ""
+        : swipe.duration_seconds;
+      swipeEditRecalculateDuration.checked = canRecalculateSwipeDuration(swipe.action);
+      swipeEditRecalculateDuration.disabled = !canRecalculateSwipeDuration(swipe.action);
+      swipeEditDuration.disabled = swipeEditRecalculateDuration.checked;
+      swipeEditActiveUsers.value = swipe.active_users === null || swipe.active_users === undefined
+        ? "0"
+        : swipe.active_users;
+      swipeEditWarning.value = swipe.warning || "";
+      swipeEditEventId.value = swipe.event_id || "";
+      swipeEditAllowed.checked = swipe.allowed !== false;
+      swipeEditDetails.value = swipe.details || "";
+      swipeEditStatus.textContent = "";
+      swipeEditModal.classList.remove("hidden");
+      swipeEditTime.focus();
+    }
+
+    function closeSwipeEditDialog() {
+      swipeEditModal.classList.add("hidden");
+      state.selectedSwipeEventId = null;
+      swipeEditForm.reset();
+      swipeEditStatus.textContent = "";
+    }
+
+    function updateSwipeDurationControls() {
+      const canRecalculate = canRecalculateSwipeDuration(swipeEditAction.value);
+      swipeEditRecalculateDuration.disabled = !canRecalculate;
+      if (!canRecalculate) swipeEditRecalculateDuration.checked = false;
+      swipeEditDuration.disabled = swipeEditRecalculateDuration.checked;
+    }
+
+    async function submitSwipeEdit() {
+      const swipeEventId = state.selectedSwipeEventId;
+      if (!swipeEventId) return;
+      const timestamp = new Date(swipeEditTime.value);
+      if (Number.isNaN(timestamp.getTime())) {
+        swipeEditStatus.textContent = "Choose a valid swipe time";
+        return;
+      }
+
+      swipeEditStatus.textContent = "Saving swipe...";
+      try {
+        await requestJson("PATCH", `/api/swipes/${encodeURIComponent(swipeEventId)}`, {
+          timestamp: timestamp.toISOString(),
+          card_id: swipeEditCard.value,
+          station_id: swipeEditStationId.value,
+          station_name: swipeEditStationName.value,
+          station_kind: swipeEditKind.value,
+          action: swipeEditAction.value,
+          allowed: swipeEditAllowed.checked,
+          duration_seconds: swipeEditDuration.value,
+          recalculate_duration: swipeEditRecalculateDuration.checked,
+          active_users: swipeEditActiveUsers.value,
+          warning: swipeEditWarning.value,
+          details: swipeEditDetails.value,
+          event_id: swipeEditEventId.value
+        });
+        closeSwipeEditDialog();
+        showToast("Swipe updated");
+        await refreshDashboard();
+        if (state.adminDataLoadedAt) await refreshAdmin();
+      } catch (error) {
+        swipeEditStatus.textContent = error.message || "Could not save swipe";
+      }
+    }
+
+    async function deleteSwipeEvent(swipeEventId) {
+      if (state.role !== "admin") return;
+      const confirmed = await showConfirmDialog({
+        title: "Delete Swipe?",
+        message: "This permanently removes the swipe record from history and exports. Current live occupancy is not recalculated.",
+        confirmText: "Delete Swipe",
+        danger: true
+      });
+      if (!confirmed) return;
+
+      try {
+        await requestJson("DELETE", `/api/swipes/${encodeURIComponent(swipeEventId)}`);
+        showToast("Swipe deleted");
+        await refreshDashboard();
+        if (state.adminDataLoadedAt) await refreshAdmin();
+      } catch (error) {
+        showToast(error.message || "Could not delete swipe", "error");
       }
     }
 
@@ -3453,6 +4075,7 @@
       const warnings = data.warnings || [];
       const canViewStationPeople = ["admin", "staff"].includes(dashboardRole(data));
       const canManuallyCheckout = ["admin", "staff"].includes(dashboardRole(data));
+      const canEditSwipes = dashboardRole(data) === "admin";
       const activeStationCount = Number.isFinite(Number(data.active_station_count))
         ? Number(data.active_station_count)
         : stations.filter(station => station.active_sessions > 0).length;
@@ -3484,6 +4107,7 @@
       state.hasDashboardLoaded = true;
       updateDashboardVisibility(data);
       clearWarningsButton.disabled = warningTotal === 0;
+      swipeActionsHeading.classList.toggle("hidden", !canEditSwipes);
 
       peopleBody.innerHTML = activePeople.length
         ? activePeople.map(person => `
@@ -3526,9 +4150,25 @@
             <td data-label="Person">${personCell(session)}</td>
             <td data-label="Station">${escapeHtml(session.station_name)}</td>
             <td data-label="Elapsed">${formatDuration(session.elapsed_seconds)}</td>
+            ${canManuallyCheckout ? `
+              <td data-label="Checkout">
+                <button class="danger checkout-button" type="button" data-station-checkout="${escapeHtml(session.session_id)}">Check out</button>
+              </td>
+            ` : ""}
           </tr>
         `).join("")
-        : emptyRow(3, "No active station sessions");
+        : emptyRow(canManuallyCheckout ? 4 : 3, "No active station sessions");
+
+      sessionsBody.querySelectorAll("button[data-station-checkout]").forEach(button => {
+        button.addEventListener("click", () => {
+          const session = activeSessions.find(item => String(item.session_id) === button.dataset.stationCheckout);
+          openStationCheckoutDialog(
+            button.dataset.stationCheckout,
+            session ? (session.display_name || session.name) : "this person",
+            session ? session.station_name : "this station",
+          );
+        });
+      });
 
       warningsBody.innerHTML = warnings.length
         ? warnings.map(warning => `
@@ -3543,10 +4183,20 @@
       swipesBody.innerHTML = recentSwipes.length
         ? recentSwipes.map(swipe => `
           <tr class="${issueRowClass(swipe)}">
-            <td data-label="Time">${formatTime(swipe.timestamp)}</td><td data-label="Person">${personCell(swipe)}</td><td data-label="Place">${escapeHtml(swipe.station_name)}</td><td data-label="Action"><span class="badge ${actionClass(swipe.action, swipe.allowed)}">${escapeHtml(actionLabel(swipe.action))}</span></td><td data-label="Duration">${formatDuration(swipe.duration_seconds)}</td><td data-label="Inside">${escapeHtml(swipe.active_users)}</td><td data-label="Warning">${swipe.warning ? `<span class="badge ${swipe.warning === "cert_granted_via_swipe" ? "in" : "warn"}">${escapeHtml(warningLabel(swipe.warning))}</span>` : "--"}</td>
+            <td data-label="Time">${formatTime(swipe.timestamp)}</td><td data-label="Person">${personCell(swipe)}</td><td data-label="Place">${escapeHtml(swipe.station_name)}</td><td data-label="Action"><span class="badge ${actionClass(swipe.action, swipe.allowed)}">${escapeHtml(actionLabel(swipe.action))}</span></td><td data-label="Duration">${formatDuration(swipe.duration_seconds)}</td><td data-label="Inside">${escapeHtml(swipe.active_users)}</td><td data-label="Warning">${swipe.warning ? `<span class="badge ${swipe.warning === "cert_granted_via_swipe" ? "in" : "warn"}">${escapeHtml(warningLabel(swipe.warning))}</span>` : "--"}</td>${canEditSwipes ? `<td data-label="Actions"><button type="button" data-edit-swipe="${escapeHtml(swipe.id)}">Edit</button> <button class="danger" type="button" data-delete-swipe="${escapeHtml(swipe.id)}">Delete</button></td>` : ""}
           </tr>
         `).join("")
-        : emptyRow(7, "No swipes yet");
+        : emptyRow(canEditSwipes ? 8 : 7, "No swipes yet");
+
+      swipesBody.querySelectorAll("button[data-edit-swipe]").forEach(button => {
+        button.addEventListener("click", () => {
+          const swipe = recentSwipes.find(item => String(item.id) === button.dataset.editSwipe);
+          openSwipeEditDialog(swipe);
+        });
+      });
+      swipesBody.querySelectorAll("button[data-delete-swipe]").forEach(button => {
+        button.addEventListener("click", () => deleteSwipeEvent(button.dataset.deleteSwipe));
+      });
     }
 
     function renderCanvasSyncTasks() {
@@ -3834,6 +4484,115 @@
       });
     }
 
+    function kitSearchText(kit) {
+      return [
+        kit.kit_id,
+        kit.kit_name,
+        kit.kit_card_id,
+        kit.notes,
+        kit.checked_out_to_card_id,
+        kit.checked_out_to_name,
+        kit.checked_out_to_email
+      ].map(value => String(value || "").toLowerCase()).join(" ");
+    }
+
+    function kitBorrowerCell(kit) {
+      if (!kit.checked_out_to_card_id) return "--";
+      return `
+        <div class="person">
+          <strong>${escapeHtml(kit.checked_out_to_name || kit.checked_out_to_card_id)}</strong>
+          <small>${escapeHtml(kit.checked_out_to_email || kit.checked_out_to_card_id)}</small>
+        </div>
+      `;
+    }
+
+    function resetKitForm() {
+      state.selectedKitId = "";
+      kitForm.reset();
+      kitIdInput.readOnly = false;
+      kitActiveInput.checked = true;
+      kitStatus.textContent = canManageAccounts()
+        ? ""
+        : "Admin login required to create or edit kits. Staff can return checked-out kits.";
+    }
+
+    function selectKitForEdit(kit) {
+      if (!kit || !canManageAccounts()) return;
+      state.selectedKitId = kit.kit_id;
+      kitIdInput.value = kit.kit_id;
+      kitIdInput.readOnly = true;
+      kitNameInput.value = kit.kit_name || "";
+      kitCardIdInput.value = kit.kit_card_id || "";
+      kitActiveInput.checked = kit.active !== false;
+      kitNotesInput.value = kit.notes || "";
+      kitStatus.textContent = "Editing existing kit";
+    }
+
+    function renderKits() {
+      const query = state.kitFilter.trim().toLowerCase();
+      const filteredKits = query
+        ? state.kits.filter(kit => kitSearchText(kit).includes(query))
+        : state.kits;
+      const activeCount = state.kits.filter(kit => kit.checked_out_to_card_id).length;
+
+      kitListSummary.textContent = `${activeCount} checked out | ${filteredKits.length} shown`;
+      kitsBody.innerHTML = filteredKits.length
+        ? filteredKits.map(kit => {
+            const checkedOut = Boolean(kit.checked_out_to_card_id);
+            return `
+              <tr data-kit-id="${escapeHtml(kit.kit_id)}" tabindex="0" role="button" aria-label="Edit ${escapeHtml(kit.kit_name || kit.kit_id)}">
+                <td>
+                  <div class="person">
+                    <strong>${escapeHtml(kit.kit_name || kit.kit_id)}</strong>
+                    <small>${escapeHtml(kit.notes || kit.kit_id)}</small>
+                  </div>
+                </td>
+                <td>${escapeHtml(kit.kit_card_id || "--")}</td>
+                <td><span class="badge ${checkedOut ? "warn" : kit.active ? "in" : "empty"}">${checkedOut ? "Checked out" : kit.active ? "Available" : "Disabled"}</span></td>
+                <td>${kitBorrowerCell(kit)}${checkedOut ? `<div class="subtle">${formatDateTime(kit.checked_out_at)}</div>` : ""}</td>
+                <td>${checkedOut ? `<button type="button" data-return-kit="${escapeHtml(kit.kit_id)}">Return</button>` : "--"}</td>
+              </tr>
+            `;
+          }).join("")
+        : emptyRow(5, "No kits found");
+
+      kitsBody.querySelectorAll("tr[data-kit-id]").forEach(row => {
+        const selectKit = event => {
+          if (event.target.closest("button")) return;
+          selectKitForEdit(state.kits.find(item => item.kit_id === row.dataset.kitId));
+        };
+        row.addEventListener("click", selectKit);
+        row.addEventListener("keydown", event => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectKit(event);
+          }
+        });
+      });
+
+      kitsBody.querySelectorAll("button[data-return-kit]").forEach(button => {
+        button.addEventListener("click", () => returnKit(button.dataset.returnKit));
+      });
+    }
+
+    function renderKitHistory() {
+      kitHistoryBody.innerHTML = state.kitCheckouts.length
+        ? state.kitCheckouts.map(row => `
+          <tr>
+            <td>${escapeHtml(row.kit_name || row.kit_id)}</td>
+            <td>
+              <div class="person">
+                <strong>${escapeHtml(row.name || row.card_id)}</strong>
+                <small>${escapeHtml(row.email || row.card_id)}</small>
+              </div>
+            </td>
+            <td>${formatDateTime(row.checked_out_at)}</td>
+            <td>${row.returned_at ? formatDateTime(row.returned_at) : `<span class="badge warn">Still out</span>`}</td>
+          </tr>
+        `).join("")
+        : emptyRow(4, "No kit checkout history");
+    }
+
     function renderBarChart(container, rows, valueKey, valueFormatter, fillClass = "") {
       const maximum = Math.max(0, ...rows.map(row => Number(row[valueKey]) || 0));
       container.innerHTML = rows.length
@@ -3937,7 +4696,10 @@
       updateAccessUi();
       renderPendingCards();
       renderCardRoster();
+      renderKits();
+      renderKitHistory();
 
+      renderSchedule();
       renderCertifications();
       renderStationRules();
       renderCertifyPermissions();
@@ -3949,6 +4711,32 @@
       renderCertPersonFilterLookup();
       renderCertStationLookup();
       renderCertStationFilterLookup();
+    }
+
+    function defaultSchedule() {
+      return {
+        open_days: [0, 1, 2, 3, 4, 5, 6],
+        open_time: "12:00",
+        close_time: "17:00"
+      };
+    }
+
+    function renderSchedule() {
+      if (state.role !== "admin") return;
+      const schedule = state.schedule || (state.analytics && state.analytics.schedule) || defaultSchedule();
+      const selectedDays = new Set((schedule.open_days || []).map(day => Number(day)));
+      const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+      scheduleDays.innerHTML = labels.map((label, day) => `
+        <label class="weekday-chip">
+          <input type="checkbox" value="${day}" ${selectedDays.has(day) ? "checked" : ""}>
+          <span>${label}</span>
+        </label>
+      `).join("");
+      scheduleOpen.value = schedule.open_time || "12:00";
+      scheduleClose.value = schedule.close_time || "17:00";
+      scheduleStatus.textContent = state.analytics
+        ? `Current status: ${state.analytics.space_open_now ? "open" : "closed"} during ${state.analytics.opening_hours || "saved hours"}.`
+        : "Set the days and hours regular visitors can enter without staff access.";
     }
 
     function renderPendingCards() {
@@ -4052,6 +4840,79 @@
         status.textContent = error.message;
         showToast(error.message, "error");
         await refreshAdmin();
+      }
+    }
+
+    async function saveSchedule() {
+      scheduleStatus.textContent = "Saving hours...";
+      const openDays = Array.from(scheduleDays.querySelectorAll("input:checked"))
+        .map(input => Number(input.value));
+      try {
+        const data = await postJson("/api/schedule", {
+          open_days: openDays,
+          open_time: scheduleOpen.value,
+          close_time: scheduleClose.value
+        });
+        state.schedule = data.schedule || state.schedule;
+        state.analytics = data.analytics || state.analytics;
+        scheduleStatus.textContent = "Open hours saved";
+        showToast("Open hours saved");
+        renderAnalytics();
+        renderSchedule();
+        await refreshDashboard();
+      } catch (error) {
+        scheduleStatus.textContent = error.message || "Could not save hours";
+        showToast(scheduleStatus.textContent, "error");
+      }
+    }
+
+    async function saveKit() {
+      kitStatus.textContent = "Saving kit...";
+      try {
+        if (!canManageAccounts()) throw new Error("Admin login required");
+        const data = await postJson("/api/kits", {
+          kit_id: kitIdInput.value,
+          name: kitNameInput.value,
+          card_id: kitCardIdInput.value,
+          active: kitActiveInput.checked,
+          notes: kitNotesInput.value
+        });
+        state.kits = data.kits || state.kits;
+        state.kitCheckouts = data.kit_checkouts || state.kitCheckouts;
+        resetKitForm();
+        renderKits();
+        renderKitHistory();
+        kitStatus.textContent = "Kit saved";
+        showToast("Kit saved");
+      } catch (error) {
+        kitStatus.textContent = error.message || "Could not save kit";
+        showToast(kitStatus.textContent, "error");
+      }
+    }
+
+    async function returnKit(kitId) {
+      const kit = state.kits.find(item => item.kit_id === kitId);
+      const confirmed = await showConfirmDialog({
+        title: `Return ${kit ? kit.kit_name : "kit"}?`,
+        message: "This checks the kit back in and clears the current borrower.",
+        confirmText: "Return Kit",
+        danger: false
+      });
+      if (!confirmed) return;
+
+      kitStatus.textContent = "Returning kit...";
+      try {
+        const data = await postJson(`/api/kits/${encodeURIComponent(kitId)}/return`, {});
+        state.kits = data.kits || state.kits;
+        state.kitCheckouts = data.kit_checkouts || state.kitCheckouts;
+        renderKits();
+        renderKitHistory();
+        kitStatus.textContent = "Kit returned";
+        showToast("Kit returned");
+        await refreshDashboard();
+      } catch (error) {
+        kitStatus.textContent = error.message || "Could not return kit";
+        showToast(kitStatus.textContent, "error");
       }
     }
 
@@ -4257,6 +5118,9 @@
         state.certifyPermissions = data.certify_permissions || [];
         state.canvasSyncTasks = data.canvas_sync_tasks || [];
         state.auditLog = data.audit_log || [];
+        state.kits = data.kits || [];
+        state.kitCheckouts = data.kit_checkouts || [];
+        state.schedule = data.schedule || state.schedule;
         state.canCertifyStationIds = data.can_certify_station_ids || [];
         state.adminDataLoadedAt = Date.now();
         renderAdmin();
@@ -4300,6 +5164,9 @@
           throw new Error(data.error || `Analytics refresh failed (${response.status})`);
         }
         state.analytics = data.analytics || null;
+        state.schedule = state.analytics && state.analytics.schedule
+          ? state.analytics.schedule
+          : state.schedule;
         renderAnalytics();
       } catch (error) {
         analyticsStatus.textContent = error.message || "Analytics unavailable";
@@ -4352,11 +5219,16 @@
     }
 
     async function postJson(url, body) {
-      const response = await fetch(url, {
-        method: "POST",
+      return requestJson("POST", url, body);
+    }
+
+    async function requestJson(method, url, body = null) {
+      const options = {
+        method,
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify(body)
-      });
+      };
+      if (body !== null) options.body = JSON.stringify(body);
+      const response = await fetch(url, options);
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) throw new Error(data.error || "Save failed");
       return data;
@@ -4534,6 +5406,20 @@
       renderCardFilterDebounced();
     });
 
+    kitFilter.addEventListener("input", () => {
+      state.kitFilter = kitFilter.value;
+      renderKits();
+    });
+
+    kitForm.addEventListener("submit", event => {
+      event.preventDefault();
+      saveKit();
+    });
+
+    clearKitButton.addEventListener("click", () => {
+      resetKitForm();
+    });
+
     document.querySelectorAll("[data-cert-view]").forEach(button => {
       button.addEventListener("click", () => {
         state.certViewMode = button.dataset.certView;
@@ -4610,10 +5496,22 @@
     checkoutModal.addEventListener("click", event => {
       if (event.target === checkoutModal) closeManualCheckoutDialog();
     });
+    swipeEditCancel.addEventListener("click", closeSwipeEditDialog);
+    swipeEditForm.addEventListener("submit", event => {
+      event.preventDefault();
+      submitSwipeEdit();
+    });
+    swipeEditAction.addEventListener("input", updateSwipeDurationControls);
+    swipeEditRecalculateDuration.addEventListener("change", updateSwipeDurationControls);
+    swipeEditModal.addEventListener("click", event => {
+      if (event.target === swipeEditModal) closeSwipeEditDialog();
+    });
 
     document.addEventListener("keydown", event => {
       if (event.key === "Escape") {
-        if (!checkoutModal.classList.contains("hidden")) {
+        if (!swipeEditModal.classList.contains("hidden")) {
+          closeSwipeEditDialog();
+        } else if (!checkoutModal.classList.contains("hidden")) {
           closeManualCheckoutDialog();
         } else if (!confirmModal.classList.contains("hidden")) {
           closeConfirmDialog(false);
@@ -4629,10 +5527,6 @@
       clearWarnings();
     });
 
-    downloadAuditButton.addEventListener("click", () => {
-      downloadCsv("/audit.csv");
-    });
-
     downloadCardsButton.addEventListener("click", () => {
       downloadCsv("/cards.csv");
     });
@@ -4646,6 +5540,11 @@
       state.analytics = null;
       renderAnalytics();
       refreshAnalytics();
+    });
+
+    scheduleForm.addEventListener("submit", event => {
+      event.preventDefault();
+      saveSchedule();
     });
 
     importCanvasButton.addEventListener("click", () => {

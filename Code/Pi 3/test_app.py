@@ -1,4 +1,5 @@
 import importlib
+import io
 import os
 import sqlite3
 import tempfile
@@ -6,6 +7,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+
+from openpyxl import load_workbook
 
 
 class StationServerTests(unittest.TestCase):
@@ -615,6 +618,21 @@ class StationServerTests(unittest.TestCase):
             password="StaffPass123",
         )
         self.swipe("formula-card", "front-door", "formula-enter")
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            self.server.log_event(
+                conn,
+                "formula-card",
+                "soldering",
+                "Soldering",
+                "station",
+                "station_out",
+                duration_seconds=7200,
+                event_id="fall-station-session",
+                event_time="2026-09-01T10:00:00+00:00",
+            )
+            conn.commit()
+            conn.close()
         staff_token = self.login("exportstaff", "StaffPass123")
 
         swipes = self.client.get(
@@ -666,6 +684,39 @@ class StationServerTests(unittest.TestCase):
         self.assertEqual(workbook.status_code, 200)
         self.assertTrue(workbook.data.startswith(b"PK"))
         self.assertIn(".xlsx", workbook.headers["Content-Disposition"])
+        loaded_workbook = load_workbook(io.BytesIO(workbook.data), read_only=True)
+        self.assertEqual(loaded_workbook.sheetnames[0], "Overview")
+        for sheet_name in (
+            "Term Summary",
+            "Station by Term",
+            "Certs by Term",
+            "Academic Calendar",
+        ):
+            self.assertIn(sheet_name, loaded_workbook.sheetnames)
+        swipe_headers = next(
+            loaded_workbook["Swipe Log"].iter_rows(max_row=1, values_only=True)
+        )
+        self.assertIn("term", swipe_headers)
+        self.assertIn("week_start", swipe_headers)
+        term_summary_rows = list(
+            loaded_workbook["Term Summary"].iter_rows(values_only=True)
+        )
+        term_headers = term_summary_rows[0]
+        self.assertIn("certifications_granted", term_headers)
+        self.assertIn("certified_people", term_headers)
+        self.assertIn("Fall 2026", [row[0] for row in term_summary_rows[1:]])
+        fall_row = next(row for row in term_summary_rows[1:] if row[0] == "Fall 2026")
+        self.assertGreaterEqual(fall_row[4], 2)
+        calendar_headers = next(
+            loaded_workbook["Academic Calendar"].iter_rows(max_row=1, values_only=True)
+        )
+        self.assertNotIn("source", calendar_headers)
+        cert_headers = next(
+            loaded_workbook["Certifications"].iter_rows(max_row=1, values_only=True)
+        )
+        self.assertNotIn("academic_session", cert_headers)
+        self.assertNotIn("period_status", cert_headers)
+        self.assertIn("certification_date", cert_headers)
         self.assertEqual(
             self.client.get(
                 "/master-export.xlsx", headers=self.auth(staff_token)
@@ -932,6 +983,7 @@ class StationServerTests(unittest.TestCase):
     def test_admin_can_end_one_active_station_session(self):
         self.create_card("session-card", "B623", "Session User", "session@cpp.edu")
         started_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        ended_at = started_at + timedelta(minutes=8)
         with self.server.db_lock:
             conn = self.server.db_connect()
             cursor = conn.execute(
@@ -948,10 +1000,11 @@ class StationServerTests(unittest.TestCase):
         response = self.client.post(
             f"/api/active-sessions/{session_id}/checkout",
             headers=self.auth(self.admin_token),
-            json={},
+            json={"exited_at": ended_at.isoformat()},
         )
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(response.get_json()["event"]["action"], "station_manual_out")
+        self.assertEqual(response.get_json()["event"]["duration_seconds"], 480)
 
         conn = sqlite3.connect(self.database_path)
         try:
@@ -973,6 +1026,7 @@ class StationServerTests(unittest.TestCase):
         self.create_card("bulk-session-one", "B627", "Station One", "stationone@cpp.edu")
         self.create_card("bulk-session-two", "B628", "Station Two", "stationtwo@cpp.edu")
         started_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=10)
+        ended_at = started_at + timedelta(minutes=7)
         with self.server.db_lock:
             conn = self.server.db_connect()
             session_ids = []
@@ -991,7 +1045,7 @@ class StationServerTests(unittest.TestCase):
         response = self.client.post(
             "/api/active-sessions/checkout-bulk",
             headers=self.auth(self.admin_token),
-            json={"session_ids": session_ids},
+            json={"session_ids": session_ids, "exited_at": ended_at.isoformat()},
         )
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(response.get_json()["checked_out_count"], 2)
@@ -1073,6 +1127,150 @@ class StationServerTests(unittest.TestCase):
             )
         finally:
             conn.close()
+
+    def test_admin_can_edit_a_swipe_event(self):
+        self.swipe("duplicate-event-card", "front-door", "same-event")
+        swipe = self.swipe("edit-swipe-card", "front-door", "edit-swipe-event")
+        self.assertEqual(swipe.status_code, 200, swipe.get_data(as_text=True))
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            swipe_event_id = conn.execute(
+                "SELECT id FROM swipe_events WHERE event_id = 'edit-swipe-event'"
+            ).fetchone()[0]
+            conn.close()
+
+        edited = self.client.patch(
+            f"/api/swipes/{swipe_event_id}",
+            headers=self.auth(self.admin_token),
+            json={
+                "card_id": "edited-card",
+                "station_id": "back-door",
+                "station_name": "Back Door",
+                "station_kind": "door",
+                "timestamp": "2026-08-14T12:30:00+00:00",
+                "action": "manual_edit",
+                "allowed": False,
+                "duration_seconds": 30,
+                "active_users": 2,
+                "warning": "manual_review",
+                "details": "corrected by admin",
+                "event_id": "edited-swipe-event",
+            },
+        )
+        self.assertEqual(edited.status_code, 200, edited.get_data(as_text=True))
+
+        conn = sqlite3.connect(self.database_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT card_id, station_id, station_name, station_kind, action,
+                       allowed, duration_seconds, active_users, warning, details,
+                       event_id
+                FROM swipe_events
+                WHERE id = ?
+                """,
+                (swipe_event_id,),
+            ).fetchone()
+            self.assertEqual(row[0], "edited-card")
+            self.assertEqual(row[1], "back-door")
+            self.assertEqual(row[2], "Back Door")
+            self.assertEqual(row[3], "door")
+            self.assertEqual(row[4], "manual_edit")
+            self.assertEqual(row[5], 0)
+            self.assertEqual(row[6], 30)
+            self.assertEqual(row[7], 2)
+            self.assertEqual(row[8], "manual_review")
+            self.assertEqual(row[9], "corrected by admin")
+            self.assertEqual(row[10], "edited-swipe-event")
+            self.assertEqual(
+                conn.execute(
+                    "SELECT action FROM audit_log WHERE target_id = ? ORDER BY id DESC LIMIT 1",
+                    (str(swipe_event_id),),
+                ).fetchone()[0],
+                "swipe_event_edited",
+            )
+        finally:
+            conn.close()
+
+        with self.server.db_lock:
+            conn = self.server.db_connect()
+            self.server.log_event(
+                conn,
+                "duration-card",
+                "laser-cutting",
+                "Laser Cutting",
+                "station",
+                "station_in",
+                event_time="2026-08-14T12:00:00+00:00",
+            )
+            self.server.log_event(
+                conn,
+                "duration-card",
+                "laser-cutting",
+                "Laser Cutting",
+                "station",
+                "station_out",
+                duration_seconds=60,
+                event_id="duration-out",
+                event_time="2026-08-14T12:01:00+00:00",
+            )
+            duration_event_id = conn.execute(
+                "SELECT id FROM swipe_events WHERE event_id = 'duration-out'"
+            ).fetchone()[0]
+            conn.commit()
+            conn.close()
+
+        recalculated = self.client.patch(
+            f"/api/swipes/{duration_event_id}",
+            headers=self.auth(self.admin_token),
+            json={
+                "card_id": "duration-card",
+                "station_id": "laser-cutting",
+                "station_name": "Laser Cutting",
+                "station_kind": "station",
+                "timestamp": "2026-08-14T12:10:00+00:00",
+                "action": "station_out",
+                "allowed": True,
+                "duration_seconds": 60,
+                "recalculate_duration": True,
+                "active_users": 0,
+                "warning": "",
+                "details": "",
+                "event_id": "duration-out",
+            },
+        )
+        self.assertEqual(recalculated.status_code, 200, recalculated.get_data(as_text=True))
+        conn = sqlite3.connect(self.database_path)
+        try:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT duration_seconds FROM swipe_events WHERE id = ?",
+                    (duration_event_id,),
+                ).fetchone()[0],
+                600,
+            )
+        finally:
+            conn.close()
+
+        duplicate = self.client.patch(
+            f"/api/swipes/{swipe_event_id}",
+            headers=self.auth(self.admin_token),
+            json={
+                "card_id": "edited-card",
+                "station_id": "back-door",
+                "station_name": "Back Door",
+                "station_kind": "door",
+                "timestamp": "2026-08-14T12:30:00+00:00",
+                "action": "manual_edit",
+                "allowed": True,
+                "duration_seconds": "",
+                "active_users": 0,
+                "warning": "",
+                "details": "",
+                "event_id": "same-event",
+            },
+        )
+        self.assertEqual(duplicate.status_code, 400)
 
     def test_staff_can_clear_live_warnings_without_deleting_swipe_history(self):
         self.create_card(
