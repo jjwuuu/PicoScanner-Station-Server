@@ -1,4 +1,5 @@
 import csv
+import gzip
 import hashlib
 import hmac
 import ipaddress
@@ -2974,7 +2975,15 @@ def health():
 @app.get("/dashboard")
 def dashboard():
     with open(DASHBOARD_PATH, "r", encoding="utf-8") as file:
-        return Response(file.read(), mimetype="text/html")
+        body = file.read()
+    if "gzip" in request.headers.get("Accept-Encoding", "").lower():
+        compressed = gzip.compress(body.encode("utf-8"), compresslevel=6)
+        response = Response(compressed, mimetype="text/html")
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(compressed))
+        response.headers["Vary"] = "Accept-Encoding"
+        return response
+    return Response(body, mimetype="text/html")
 
 
 @app.get("/api/dashboard")
